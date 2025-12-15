@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>新 UI 预览 - 星星人民公益站</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+            background: radial-gradient(circle at top right, #2e1065, #0f172a);
+            color: #f8fafc;
+            min-height: 100vh;
+        }
+        .app {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+        /* Top Banner Styles */
+        .top-banner {
+            height: 70px;
+            background: rgba(30, 27, 75, 0.95);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+            flex-shrink: 0;
+            z-index: 200;
+        }
+        .banner-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            color: #fff;
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+        }
+        .logo-text {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #fff;
+        }
+        .content-wrapper {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        /* Sidebar Styles */
+        .sidebar {
+            width: 280px;
+            background: rgba(30, 27, 75, 0.8);
+            backdrop-filter: blur(20px);
+            border-right: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            flex-direction: column;
+            padding: 24px 16px;
+            flex-shrink: 0;
+            z-index: 100;
+        }
+        .sidebar-profile {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 0 0 24px 0;
+            margin-bottom: 24px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .profile-avatar {
+            width: 72px;
+            height: 72px;
+            border-radius: 24px;
+            background: linear-gradient(135deg, #8b5cf6, #6366f1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            font-weight: 700;
+            color: #fff;
+            margin-bottom: 16px;
+            box-shadow: 0 8px 20px rgba(99, 102, 241, 0.3);
+            position: relative;
+        }
+        .profile-status {
+            position: absolute;
+            bottom: -4px;
+            right: -4px;
+            width: 20px;
+            height: 20px;
+            background-color: #10b981;
+            border: 4px solid #1e1b4b;
+            border-radius: 50%;
+        }
+        .profile-name {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 4px;
+        }
+        .profile-role {
+            font-size: 0.875rem;
+            color: #94a3b8;
+            margin-bottom: 16px;
+        }
+        .profile-action-btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            color: #cbd5e1;
+            padding: 8px 20px;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            width: 100%;
+        }
+        .profile-action-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            color: #fff;
+        }
+        .nav-menu {
+            flex: 1;
+            overflow-y: auto;
+        }
+        .nav-item {
+            display: flex;
+            align-items: center;
+            justify-content: center; /* Center content horizontally */
+            padding: 16px 20px;
+            color: #cbd5e1;
+            text-decoration: none;
+            gap: 12px;
+            font-weight: 500;
+            transition: all 0.2s;
+            border-radius: 16px;
+            margin-bottom: 8px;
+        }
+        .nav-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+            color: #fff;
+            transform: translateX(4px);
+        }
+        .nav-item.active {
+            background: #ffffff;
+            color: #1e1b4b;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+            font-weight: 700;
+        }
+        .nav-item .icon {
+            font-size: 1.5rem;
+        }
+        /* Main Content Area */
+        .main-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px 32px 32px 32px; /* Aligned with sidebar top padding */
+        }
+        .user-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background-color: #6366f1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            color: #fff;
+        }
+        .logout-btn {
+            background: none;
+            border: none;
+            color: #94a3b8;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        .logout-btn:hover {
+            color: #f8fafc;
+        }
+        .user-level-wrapper {
+            position: relative;
+            margin-right: 16px;
+            cursor: pointer;
+        }
+        .user-level {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 12px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            font-size: 0.875rem;
+            color: #fff;
+            transition: all 0.2s;
+        }
+        .user-level-wrapper:hover .user-level {
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-1px);
+        }
+        .level-icon {
+            font-size: 1rem;
+        }
+        .level-dropdown {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            width: 280px;
+            background: rgba(30, 41, 59, 0.95);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(10px);
+            transition: all 0.2s ease;
+            z-index: 100;
+            margin-top: 12px;
+        }
+        .user-level-wrapper:hover .level-dropdown {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+        /* Arrow for dropdown */
+        .level-dropdown::before {
+            content: '';
+            position: absolute;
+            top: -6px;
+            right: 20px;
+            width: 12px;
+            height: 12px;
+            background: rgba(30, 41, 59, 0.95);
+            border-left: 1px solid rgba(255, 255, 255, 0.1);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            transform: rotate(45deg);
+        }
+        .level-dropdown-header {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+        .level-icon-large {
+            font-size: 2.5rem;
+            margin-bottom: 8px;
+        }
+        .level-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+        .level-desc {
+            font-size: 0.875rem;
+            color: #64748b;
+            margin-bottom: 16px;
+            line-height: 1.5;
+            text-align: center;
+        }
+        .full-width {
+            width: 100%;
+        }
+        .main-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0 32px 32px 32px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+            margin-top: 30px; /* Added margin to ensure gap from top */
+        }
+        .card {
+            background: rgba(30, 41, 59, 0.4);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 20px -3px rgba(0, 0, 0, 0.2);
+            border-color: rgba(255, 255, 255, 0.1);
+        }
+        .card-header {
+            padding: 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .card-title {
+            font-size: 1.125rem;
+            font-weight: 700;
+            color: #f8fafc;
+        }
+        .card-body {
+            padding: 20px;
+        }
+        .gauge-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .gauge {
+            width: 140px;
+            height: 140px;
+            border-radius: 50%;
+            background: conic-gradient(#8b5cf6 0% 30%, rgba(255,255,255,0.1) 30% 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 16px;
+            box-shadow: 0 0 20px rgba(139, 92, 246, 0.2);
+            position: relative;
+        }
+        .gauge-inner {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            background-color: #1e293b;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #f8fafc;
+            z-index: 2;
+        }
+        /* Small Gauge for Anti-Gravity */
+        .gauge-small {
+            width: 100px;
+            height: 100px;
+            margin-bottom: 8px;
+        }
+        .gauge-small .gauge-inner {
+            width: 70px;
+            height: 70px;
+            font-size: 1rem;
+        }
+        .gauge-claude {
+            background: conic-gradient(#d946ef 0% 20%, rgba(255,255,255,0.1) 20% 100%);
+            box-shadow: 0 0 15px rgba(217, 70, 239, 0.3);
+        }
+        .gauge-gemini {
+            background: conic-gradient(#3b82f6 0% 22.5%, rgba(255,255,255,0.1) 22.5% 100%);
+            box-shadow: 0 0 15px rgba(59, 130, 246, 0.3);
+        }
+        .model-stats {
+            width: 100%;
+            margin-top: 12px;
+        }
+        .model-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .model-label {
+            flex: 0 0 140px;
+            font-size: 0.875rem;
+            color: #94a3b8;
+            font-weight: 500;
+        }
+        .model-bar {
+            flex: 1;
+            height: 8px;
+            background-color: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .model-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+        }
+        .model-value {
+            margin-left: 12px;
+            font-size: 0.75rem;
+            color: #94a3b8;
+            width: 60px;
+            text-align: right;
+        }
+        .flash { background: linear-gradient(90deg, #6366f1, #818cf8); box-shadow: 0 0 10px rgba(99, 102, 241, 0.4); }
+        .pro { background: linear-gradient(90deg, #d946ef, #f472b6); box-shadow: 0 0 10px rgba(217, 70, 239, 0.4); }
+        .preview { background: linear-gradient(90deg, #06b6d4, #22d3ee); box-shadow: 0 0 10px rgba(6, 182, 212, 0.4); }
+
+        .announcement-content {
+            color: #cbd5e1;
+            line-height: 1.6;
+        }
+        .announcement-content p {
+            margin-bottom: 8px;
+        }
+
+        .level-card .card-body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+        }
+        .level-badge {
+            font-size: 2rem;
+            margin-bottom: 8px;
+        }
+        .level-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .level-desc {
+            color: #a0a0a0;
+            margin-bottom: 16px;
+        }
+        .primary-btn {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            border: none;
+            color: #fff;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .primary-btn:hover {
+            opacity: 0.9;
+        }
+
+        .ag-status {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            margin-top: 24px;
+        }
+        .ag-gauges {
+            display: flex;
+            justify-content: space-around;
+            gap: 16px;
+        }
+        .ag-gauge-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .ag-gauge-label {
+            font-size: 0.875rem;
+            color: #94a3b8;
+            font-weight: 500;
+            margin-top: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .ag-gauge-value {
+            font-size: 0.75rem;
+            color: #64748b;
+            margin-top: 2px;
+        }
+        .ag-button {
+            margin-top: 8px;
+            text-align: center;
+        }
+        .ag-button .primary-btn {
+            width: 100%;
+        }
+
+        .bottom-nav {
+            display: none;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 64px;
+            background: rgba(30, 27, 75, 0.95);
+            backdrop-filter: blur(20px);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            z-index: 100;
+            justify-content: space-around;
+            align-items: center;
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+        .bottom-nav-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #94a3b8;
+            text-decoration: none;
+            font-size: 0.75rem;
+            gap: 4px;
+            width: 100%;
+            height: 100%;
+        }
+        .bottom-nav-item.active {
+            color: #fff;
+        }
+        .bottom-nav-item .icon {
+            font-size: 1.25rem;
+        }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                display: none;
+            }
+            .bottom-nav {
+                display: flex;
+            }
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            .top-banner {
+                padding: 0 16px;
+            }
+            .main-content {
+                padding: 24px 16px 80px 16px; /* Bottom padding for nav bar */
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <header class="top-banner">
+            <div class="banner-left">
+                <div class="logo-icon">☭</div>
+                <div class="logo-text">星星人民公益站</div>
+            </div>
+            <div class="banner-right" style="display: flex; align-items: center;">
+                <div class="user-level-wrapper">
+                    <div class="user-level">
+                        <span class="level-icon">👑</span>
+                        <span class="level-name">大佬</span>
+                    </div>
+                    <div class="level-dropdown">
+                        <div class="level-dropdown-header">
+                            <span class="level-icon-large">👑</span>
+                            <span class="level-title">大佬</span>
+                        </div>
+                        <div class="level-desc">您已拥有尊贵的加成额度。继续贡献可以升级至臻大佬。</div>
+                        <button class="primary-btn full-width">去升级 →</button>
+                    </div>
+                </div>
+                <button class="logout-btn" style="margin-left: 16px;">退出</button>
+            </div>
+        </header>
+
+        <div class="content-wrapper">
+            <aside class="sidebar">
+                <div class="sidebar-profile">
+                    <div class="profile-avatar">
+                        A
+                        <div class="profile-status"></div>
+                    </div>
+                    <div class="profile-name">admin</div>
+                    <div class="profile-role">admin</div>
+                    <button class="profile-action-btn">修改密码</button>
+                </div>
+
+                <nav class="nav-menu">
+                    <a href="#" class="nav-item active">
+                        <span class="icon">🏠</span> 控制台
+                    </a>
+                    <a href="#" class="nav-item">
+                        <span class="icon">🚀</span> 反重力
+                    </a>
+                    <a href="#" class="nav-item">
+                        <span class="icon">📤</span> 上传凭证
+                    </a>
+                    <a href="#" class="nav-item">
+                        <span class="icon">🔑</span> 密钥管理
+                    </a>
+                    <a href="#" class="nav-item">
+                        <span class="icon">⚙️</span> 管理
+                    </a>
+                </nav>
+            </aside>
+
+            <main class="main-content">
+                <div class="grid">
+                    <!-- 公告卡片 (Moved to first) -->
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">📢 公告</div>
+                        </div>
+                        <div class="card-body">
+                            <div class="announcement-content">
+                                <p>🌟 <strong>系统升级通知</strong>：为了提高服务质量，我们将在本周末进行系统维护，预计停机 2 小时。</p>
+                                <p>🚀 <strong>新模型上线</strong>：Gemini 3 Pro Preview 现已支持！</p>
+                                <p>感谢您的理解与支持！</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 今日用量卡片 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">📊 今日用量</div>
+                        </div>
+                        <div class="card-body">
+                            <div class="gauge-container">
+                                <div class="gauge">
+                                    <div class="gauge-inner">30%</div>
+                                </div>
+                                <div class="model-stats">
+                                    <div class="model-row">
+                                        <div class="model-label">gemini-2.5-flash</div>
+                                        <div class="model-bar">
+                                            <div class="model-bar-fill flash" style="width: 40%"></div>
+                                        </div>
+                                        <div class="model-value">400/1000</div>
+                                    </div>
+                                    <div class="model-row">
+                                        <div class="model-label">gemini-2.5-pro</div>
+                                        <div class="model-bar">
+                                            <div class="model-bar-fill pro" style="width: 25%"></div>
+                                        </div>
+                                        <div class="model-value">125/500</div>
+                                    </div>
+                                    <div class="model-row">
+                                        <div class="model-label">gemini-3-pro</div>
+                                        <div class="model-bar">
+                                            <div class="model-bar-fill preview" style="width: 10%"></div>
+                                        </div>
+                                        <div class="model-value">20/200</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 反重力状态卡片 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">⚡ 反重力状态</div>
+                        </div>
+                        <div class="card-body">
+                            <div class="ag-status">
+                                <div class="ag-gauges">
+                                    <div class="ag-gauge-item">
+                                        <div class="gauge gauge-small gauge-claude">
+                                            <div class="gauge-inner">20%</div>
+                                        </div>
+                                        <div class="ag-gauge-label">
+                                            Claude
+                                        </div>
+                                        <div class="ag-gauge-value">20 / 100</div>
+                                    </div>
+                                    <div class="ag-gauge-item">
+                                        <div class="gauge gauge-small gauge-gemini">
+                                            <div class="gauge-inner">22%</div>
+                                        </div>
+                                        <div class="ag-gauge-label">
+                                            Gemini 3
+                                        </div>
+                                        <div class="ag-gauge-value">45 / 200</div>
+                                    </div>
+                                </div>
+                                <div class="ag-button">
+                                    <button class="primary-btn full-width">上传凭证</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+
+        <nav class="bottom-nav">
+            <a href="#" class="bottom-nav-item active">
+                <span class="icon">🏠</span>
+                <span>概览</span>
+            </a>
+            <a href="#" class="bottom-nav-item">
+                <span class="icon">🚀</span>
+                <span>反重力</span>
+            </a>
+            <a href="#" class="bottom-nav-item">
+                <span class="icon">📤</span>
+                <span>上传</span>
+            </a>
+            <a href="#" class="bottom-nav-item">
+                <span class="icon">🔑</span>
+                <span>密钥</span>
+            </a>
+            <a href="#" class="bottom-nav-item">
+                <span class="icon">⚙️</span>
+                <span>管理</span>
+            </a>
+        </nav>
+    </div>
+</body>
+</html>

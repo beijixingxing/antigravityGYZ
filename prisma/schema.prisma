@@ -1,0 +1,150 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CredentialStatus {
+  VALIDATING
+  ACTIVE
+  COOLING
+  DEAD
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+model User {
+  id          Int      @id @default(autoincrement())
+  email       String   @unique
+  username    String?  @unique
+  password    String   // Hashed
+  role        Role     @default(USER)
+  level       Int      @default(0) // 0: Free, 1: Contributor
+  daily_limit Int      @default(300)
+  today_used  Int      @default(0)
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now())
+  discordId   String?  @unique
+  discordUsername String?
+  discordAvatar String?
+  ag_claude_limit   Int      @default(0)
+  ag_gemini3_limit  Int      @default(0)
+
+  api_keys    ApiKey[]
+  credentials GoogleCredential[]
+  usage_logs  UsageLog[]
+  antigravityTokens AntigravityToken[]
+}
+
+enum ApiKeyType {
+  NORMAL
+  ADMIN
+}
+
+model ApiKey {
+  id         Int      @id @default(autoincrement())
+  key        String   @unique // sk-xxx
+  name       String?  // Custom name
+  type       ApiKeyType @default(NORMAL)
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+
+  user_id    Int
+  user       User     @relation(fields: [user_id], references: [id])
+}
+
+model GoogleCredential {
+  id                Int              @id @default(autoincrement())
+  // Structured Storage
+  client_id         String
+  client_secret     String
+    refresh_token     String
+    project_id        String
+    google_email      String?
+    access_token      String?
+      expires_at        DateTime?
+      cooling_expires_at DateTime?
+      
+        owner_id          Int
+        is_active         Boolean          @default(false)
+        supports_v3       Boolean          @default(false)
+  status            CredentialStatus @default(VALIDATING)
+  fail_count        Int              @default(0)
+  last_used_at      DateTime?
+  last_validated_at DateTime?
+  created_at        DateTime         @default(now())
+
+  owner             User             @relation(fields: [owner_id], references: [id])
+  usage_logs        UsageLog[]
+
+  @@index([status]) // Optimized for fetching ACTIVE credentials
+  @@index([google_email])
+}
+
+model UsageLog {
+  id            Int      @id @default(autoincrement())
+  user_id       Int
+  credential_id Int?
+  status_code   Int
+  created_at    DateTime @default(now())
+
+  user          User              @relation(fields: [user_id], references: [id])
+  credential    GoogleCredential? @relation(fields: [credential_id], references: [id])
+}
+
+model SystemSetting {
+  key   String @id
+  value String // JSON string or simple value
+}
+
+// Antigravity Token 状态
+enum AntigravityTokenStatus {
+  ACTIVE
+  COOLING
+  DEAD
+}
+
+// Antigravity OAuth Token 存储
+model AntigravityToken {
+  id                Int       @id @default(autoincrement())
+  
+  // Token 信息
+  access_token      String
+  refresh_token     String    @unique
+  expires_in        Int       @default(3599)
+  timestamp         BigInt    // Token 获取时间戳 (毫秒)
+  
+  // 项目信息
+  project_id        String?
+  session_id        String?
+  email             String?
+  
+  // 所有者信息
+  owner_id          Int
+  owner             User      @relation(fields: [owner_id], references: [id])
+  
+  // 状态管理
+  is_enabled        Boolean   @default(true)
+  status            AntigravityTokenStatus @default(ACTIVE)
+  fail_count        Int       @default(0)
+  last_used_at      DateTime?
+  cooling_until     DateTime?
+  total_used        Int       @default(0)
+  
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+  
+  @@index([status, is_enabled])
+  @@index([owner_id])
+}
+
