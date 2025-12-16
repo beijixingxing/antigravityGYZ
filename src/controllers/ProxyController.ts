@@ -98,11 +98,12 @@ export class ProxyController {
         }
 
         // Fetch counts for permissions
+        // 冷却的凭证仍然算入配额增量，只有 DEAD 的不算
         const activeCredCount = await prisma.googleCredential.count({
-            where: { owner_id: user.id, status: CredentialStatus.ACTIVE }
+            where: { owner_id: user.id, status: { in: [CredentialStatus.ACTIVE, CredentialStatus.COOLING] } }
         });
         const activeV3CredCount = await prisma.googleCredential.count({
-            where: { owner_id: user.id, status: CredentialStatus.ACTIVE, supports_v3: true }
+            where: { owner_id: user.id, status: { in: [CredentialStatus.ACTIVE, CredentialStatus.COOLING] }, supports_v3: true }
         });
 
         // --- Access Control Logic (Shared Mode) ---
@@ -292,6 +293,7 @@ export class ProxyController {
         let useTokenQuota = false;
         let claudeTokenQuota = 100000;
         let gemini3TokenQuota = 200000;
+        let agRateLimit = 30; // 反重力渠道每分钟请求限制
         let config: any = {};
 
         try {
@@ -303,9 +305,30 @@ export class ProxyController {
                 useTokenQuota = !!config.use_token_quota;
                 claudeTokenQuota = config.claude_token_quota ?? 100000;
                 gemini3TokenQuota = config.gemini3_token_quota ?? 200000;
+                agRateLimit = config.rate_limit ?? 30;
             }
         } catch (e) {
             console.error('Failed to load ANTIGRAVITY_CONFIG', e);
+        }
+
+        // 反重力渠道速率限制检查（每分钟请求数限制）
+        if (!isAdminKey && agRateLimit > 0) {
+            const now = Math.floor(Date.now() / 60000); // 当前分钟
+            const rateKey = `AG_RATE:${user.id}:${now}`;
+            const current = parseInt((await redis.get(rateKey)) || '0', 10);
+
+            if (current >= agRateLimit) {
+                return reply.code(429).send({
+                    error: {
+                        message: `反重力渠道速率限制：每分钟最多 ${agRateLimit} 次请求，请稍后再试`,
+                        type: 'rate_limit_exceeded'
+                    }
+                });
+            }
+
+            // 增加计数并设置 2 分钟过期
+            await redis.incr(rateKey);
+            await redis.expire(rateKey, 120);
         }
 
         // Calculate Base Limit (Token or Request count)

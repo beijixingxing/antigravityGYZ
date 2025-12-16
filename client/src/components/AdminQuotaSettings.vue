@@ -18,7 +18,8 @@ const config = ref({
   },
   antigravity: {
     claude_limit: 100,
-    gemini3_limit: 200
+    gemini3_limit: 200,
+    rate_limit: 30 // 反重力渠道每分钟请求限制
   }
 });
 
@@ -203,6 +204,10 @@ onMounted(fetchSettings);
 
                 <!-- Limits -->
                 <div class="space-y-2">
+                    <div class="flex items-center justify-between">
+                        <label class="text-xs text-[#94A3B8]">速率 (RPM)</label>
+                        <input type="number" v-model.number="config.antigravity.rate_limit" class="w-32 bg-black/20 border border-white/10 rounded-lg px-2 py-1 text-right text-sm font-bold text-white focus:border-cyan-500 outline-none transition">
+                    </div>
                     <div class="flex items-center justify-between">
                         <label class="text-xs text-[#94A3B8]">Claude 限额</label>
                         <input v-if="config.antigravity.use_token_quota" type="number" v-model.number="config.antigravity.claude_token_quota" class="w-32 bg-black/20 border border-white/10 rounded-lg px-2 py-1 text-right text-sm font-bold text-white focus:border-blue-500 outline-none transition">

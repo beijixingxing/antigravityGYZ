@@ -11,6 +11,7 @@
             <option value="ACTIVE">🟢 只看活跃</option>
             <option value="DEAD">🔴 只看失效</option>
             <option value="COOLING">🟡 冷却中</option>
+            <option value="DUPLICATE">🔁 重复邮箱</option>
           </select>
           <div class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-[#A5B4FC]">▼</div>
         </div>

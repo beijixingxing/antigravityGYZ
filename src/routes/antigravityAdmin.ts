@@ -100,7 +100,7 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
         if (!await verifyAdmin(req, reply)) return;
 
         const setting = await prisma.systemSetting.findUnique({ where: { key: 'ANTIGRAVITY_CONFIG' } });
-        let config = { claude_limit: 100, gemini3_limit: 200 };
+        let config = { claude_limit: 100, gemini3_limit: 200, rate_limit: 30 };
 
         if (setting) {
             try {
@@ -118,7 +118,7 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
         if (!await verifyAdmin(req, reply)) return;
 
         const {
-            claude_limit, gemini3_limit,
+            claude_limit, gemini3_limit, rate_limit,
             increment_per_token_claude, increment_per_token_gemini3,
             use_token_quota, claude_token_quota, gemini3_token_quota,
             increment_token_per_token_claude, increment_token_per_token_gemini3
@@ -135,6 +135,7 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
         const config = {
             claude_limit,
             gemini3_limit,
+            rate_limit: typeof rate_limit === 'number' ? rate_limit : 30,
             increment_per_token_claude: typeof increment_per_token_claude === 'number' ? increment_per_token_claude : 0,
             increment_per_token_gemini3: typeof increment_per_token_gemini3 === 'number' ? increment_per_token_gemini3 : 0,
             use_token_quota: !!use_token_quota,
@@ -195,6 +196,50 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
         const claudeCapacityTokens = activeTokens * (config.claude_token_quota || 100000);
         const gemini3CapacityTokens = activeTokens * (config.gemini3_token_quota || 200000);
 
+        // 5. Get Antigravity Leaderboard (Top 25 by total usage)
+        const useTokenQuota = !!(config as any).use_token_quota;
+        const allUsers = await prisma.user.findMany({
+            select: { id: true, email: true, discordUsername: true, discordAvatar: true }
+        });
+
+        // Get usage for each user from Redis
+        const leaderboard: { id: number; email: string; discordUsername: string | null; discordAvatar: string | null; claude: number; gemini3: number; total: number }[] = [];
+
+        for (const user of allUsers) {
+            const claudeReqKey = `USAGE:requests:${todayStr}:${user.id}:antigravity:claude`;
+            const geminiReqKey = `USAGE:requests:${todayStr}:${user.id}:antigravity:gemini3`;
+            const claudeTokKey = `USAGE:tokens:${todayStr}:${user.id}:antigravity:claude`;
+            const geminiTokKey = `USAGE:tokens:${todayStr}:${user.id}:antigravity:gemini3`;
+
+            let claudeUsage = 0;
+            let geminiUsage = 0;
+
+            if (useTokenQuota) {
+                claudeUsage = parseInt((await redis.get(claudeTokKey)) || '0', 10);
+                geminiUsage = parseInt((await redis.get(geminiTokKey)) || '0', 10);
+            } else {
+                claudeUsage = parseInt((await redis.get(claudeReqKey)) || '0', 10);
+                geminiUsage = parseInt((await redis.get(geminiReqKey)) || '0', 10);
+            }
+
+            const total = claudeUsage + geminiUsage;
+            if (total > 0) {
+                leaderboard.push({
+                    id: user.id,
+                    email: user.email,
+                    discordUsername: user.discordUsername,
+                    discordAvatar: user.discordAvatar,
+                    claude: claudeUsage,
+                    gemini3: geminiUsage,
+                    total
+                });
+            }
+        }
+
+        // Sort by total usage and take top 25
+        leaderboard.sort((a, b) => b.total - a.total);
+        const top25 = leaderboard.slice(0, 25);
+
         return {
             date: todayStr,
             usage: {
@@ -220,7 +265,8 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
             meta: {
                 active_tokens: activeTokens,
                 limits: config
-            }
+            },
+            leaderboard: top25
         };
     });
 

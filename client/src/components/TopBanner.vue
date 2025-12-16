@@ -248,6 +248,10 @@ defineEmits(['logout', 'upgrade', 'bindDiscord', 'bindDiscordApp']);
         padding: 0 16px;
     }
     .bind-btn {
+        padding: 6px;
+        gap: 0;
+    }
+    .bind-btn span:not(.icon) {
         display: none;
     }
 }

@@ -291,7 +291,7 @@ export class AntigravityTokenManager {
     }
 
     /**
-     * Add new Token
+     * Add new Token (同一邮箱只能有一个凭证)
      */
     async addToken(data: {
         access_token: string;
@@ -303,6 +303,20 @@ export class AntigravityTokenManager {
     }): Promise<AntigravityToken> {
         const sessionId = generateSessionId();
 
+        // 检查邮箱是否已存在（去重 - 拒绝重复）
+        if (data.email) {
+            const existing = await prisma.antigravityToken.findFirst({
+                where: { email: data.email }
+            });
+
+            if (existing) {
+                // 邮箱已存在，拒绝重复上传
+                console.log(`[AntigravityTokenManager] Email ${data.email} already exists (Token #${existing.id}), rejecting duplicate`);
+                throw new Error('❌ 重复上传\n\n当前 Google 账号已经上传过反重力凭证');
+            }
+        }
+
+        // 邮箱不存在，创建新凭证
         return prisma.antigravityToken.create({
             data: {
                 access_token: data.access_token,

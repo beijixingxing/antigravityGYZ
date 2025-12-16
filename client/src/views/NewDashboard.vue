@@ -149,9 +149,9 @@
     </div>
 
     <!-- Admin Tab -->
-    <div v-else-if="currentTab === 'admin' && isAdmin" class="max-w-5xl mx-auto text-white">
+    <div v-else-if="currentTab === 'admin' && isAdmin" class="max-w-6xl mx-auto text-white">
         <!-- Admin Stats Widgets -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             <!-- 1. Global Capacity -->
             <div class="card p-5">
                 <div class="flex items-start justify-between mb-2">
@@ -240,9 +240,45 @@
                                     }">
                                 {{ (leaderboardPage - 1) * 5 + idx + 1 }}
                                 </div>
-                                <span class="text-xs font-bold text-white/90 truncate max-w-[80px]">{{ user.email.split('@')[0] }}</span>
+                                <span class="text-xs font-bold text-white/90">{{ user.discordUsername || user.email }}</span>
                             </div>
                             <span class="text-[10px] font-mono text-indigo-300">{{ user.today_used }}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. Antigravity Leaderboard -->
+            <div class="card p-5 flex flex-col">
+                <div class="flex items-center justify-between mb-2">
+                    <h4 class="text-[10px] font-black text-cyan-200 uppercase tracking-widest">反重力 Top 25 🚀</h4>
+                    <div class="flex gap-1">
+                        <button @click="agLeaderboardPage--" :disabled="agLeaderboardPage === 1" class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 text-[10px]">←</button>
+                        <span class="text-[10px] font-mono pt-1">{{ agLeaderboardPage }}/5</span>
+                        <button @click="agLeaderboardPage++" :disabled="agLeaderboardPage === 5" class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 text-[10px]">→</button>
+                    </div>
+                </div>
+                
+                <div class="flex-1 overflow-y-auto pr-1 custom-scrollbar">
+                    <div v-if="agLeaderboard.length === 0" class="h-full flex items-center justify-center text-white/20 text-xs">
+                        暂无数据
+                    </div>
+                    <div v-else class="space-y-1.5">
+                        <div v-for="(user, idx) in visibleAgLeaderboard" :key="user.id" 
+                                class="flex justify-between items-center p-2 rounded-lg bg-black/10 border border-white/5 hover:bg-white/10 transition-colors">
+                            <div class="flex items-center gap-2">
+                                <div class="w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-black"
+                                    :class="{
+                                    'bg-yellow-400 text-yellow-900': ((agLeaderboardPage - 1) * 5 + idx) === 0,
+                                    'bg-gray-300 text-gray-900': ((agLeaderboardPage - 1) * 5 + idx) === 1,
+                                    'bg-orange-400 text-orange-900': ((agLeaderboardPage - 1) * 5 + idx) === 2,
+                                    'bg-white/10 text-white/50': ((agLeaderboardPage - 1) * 5 + idx) > 2
+                                    }">
+                                {{ (agLeaderboardPage - 1) * 5 + idx + 1 }}
+                                </div>
+                                <span class="text-xs font-bold text-white/90">{{ user.discordUsername || user.email }}</span>
+                            </div>
+                            <span class="text-[10px] font-mono text-cyan-300">{{ user.total }}</span>
                         </div>
                     </div>
                 </div>
@@ -346,7 +382,9 @@ const adminStats = ref({
   },
   leaderboard: [] as any[]
 });
+const agLeaderboard = ref<any[]>([]);
 const leaderboardPage = ref(1);
+const agLeaderboardPage = ref(1);
 
 // Upload State
 const uploadContent = ref('');
@@ -388,6 +426,12 @@ const visibleLeaderboard = computed(() => {
     return list.slice(start, start + 5);
 });
 
+const visibleAgLeaderboard = computed(() => {
+    if (!Array.isArray(agLeaderboard.value)) return [];
+    const start = (agLeaderboardPage.value - 1) * 5;
+    return agLeaderboard.value.slice(start, start + 5);
+});
+
 // Methods
 const fetchStats = async () => {
   try {
@@ -407,6 +451,8 @@ const fetchStats = async () => {
                 ag_usage: ag.data.global_usage || { claude: 0, gemini3: 0 },
                 ag_total: ag.data.global_capacity || { claude: 0, gemini3: 0 }
             };
+            // Get Antigravity Leaderboard
+            agLeaderboard.value = ag.data.leaderboard || [];
         } catch {}
     }
 

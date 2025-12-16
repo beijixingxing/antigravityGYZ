@@ -364,7 +364,68 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     const query = req.query as { page?: string, limit?: string, status?: string };
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 10;
-    const statusFilter = query.status as CredentialStatus | 'ALL';
+    const statusFilter = query.status as CredentialStatus | 'ALL' | 'DUPLICATE';
+
+    // 处理 DUPLICATE 筛选 - 查找重复邮箱
+    if (statusFilter === 'DUPLICATE') {
+      // 查找同一 google_email 出现多次的情况
+      const duplicates = await prisma.$queryRaw<{ google_email: string; count: bigint }[]>`
+        SELECT google_email, COUNT(*) as count
+        FROM "GoogleCredential"
+        WHERE google_email IS NOT NULL AND google_email != ''
+        GROUP BY google_email
+        HAVING COUNT(*) > 1
+      `;
+
+      const duplicateEmails = duplicates.map(d => d.google_email);
+
+      if (duplicateEmails.length === 0) {
+        return {
+          data: [],
+          meta: { total: 0, page, limit, total_pages: 0 }
+        };
+      }
+
+      const [total, credentials] = await prisma.$transaction([
+        prisma.googleCredential.count({
+          where: { google_email: { in: duplicateEmails } }
+        }),
+        prisma.googleCredential.findMany({
+          where: { google_email: { in: duplicateEmails } },
+          skip: (page - 1) * limit,
+          take: limit,
+          include: {
+            owner: { select: { email: true } },
+            usage_logs: {
+              where: { status_code: { gte: 400 } },
+              orderBy: { created_at: 'desc' },
+              take: 1,
+              select: { status_code: true, created_at: true }
+            }
+          },
+          orderBy: [{ google_email: 'asc' }, { id: 'desc' }]
+        })
+      ]);
+
+      return {
+        data: credentials.map(c => ({
+          id: c.id,
+          name: c.client_id ? `...${c.client_id.slice(0, 15)}` : `Credential #${c.id}`,
+          owner_email: c.owner.email,
+          google_email: c.google_email,
+          status: c.status,
+          fail_count: c.fail_count,
+          last_validated: c.last_validated_at,
+          last_error: c.usage_logs[0] ? `${c.usage_logs[0].status_code} at ${c.usage_logs[0].created_at.toISOString()}` : null
+        })),
+        meta: {
+          total,
+          page,
+          limit,
+          total_pages: Math.ceil(total / limit)
+        }
+      };
+    }
 
     const whereClause = (statusFilter && statusFilter !== 'ALL') ? { status: statusFilter } : {};
 
@@ -449,7 +510,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
       }
     } catch (e) { }
 
-    // B. Leaderboard (Top 25 Users by Usage)
+    // B. Leaderboard (Top 25 Users by Usage) - 显示 Discord 名字
     const leaderboard = await prisma.user.findMany({
       orderBy: { today_used: 'desc' },
       take: 25,
@@ -457,7 +518,9 @@ export default async function adminRoutes(fastify: FastifyInstance) {
         id: true,
         email: true,
         today_used: true,
-        daily_limit: true
+        daily_limit: true,
+        discordUsername: true,
+        discordAvatar: true
       }
     });
 
