@@ -107,15 +107,46 @@ export function convertToolsToAntigravity(openaiTools: any[] | undefined): any[]
 }
 
 export function isThinkingModel(modelName: string): boolean {
-    return modelName.endsWith('-thinking') || modelName === 'gemini-2.5-pro' || modelName.startsWith('gemini-3-pro') || modelName === 'claude-opus-4-5' || modelName.includes('opus');
+    // 包含 -thinking 的模型都启用思考
+    if (modelName.includes('-thinking')) return true;
+    // gemini 3 pro 系列
+    if (modelName.startsWith('gemini-3-pro') || modelName === 'gemini-2.5-pro') return true;
+    // 纯净版不启用思考
+    return false;
+}
+
+// 根据模型名称获取思考预算
+export function getThinkingBudget(modelName: string): number {
+    // 8k 版本
+    if (modelName.endsWith('-8k')) return 8192;
+    // 4k 版本
+    if (modelName.endsWith('-4k')) return 4096;
+    // 1k 版本
+    if (modelName.endsWith('-1k')) return 1024;
+    // gemini 3 pro 系列
+    if (modelName.startsWith('gemini-3-pro')) return 4096;
+    // 其他包含 -thinking 的模型默认 4096
+    if (modelName.includes('-thinking')) return 4096;
+    // 纯净版（无 thinking 后缀）返回 0，不启用思考
+    return 0;
 }
 
 export function mapModelName(modelName: string): string {
-    if (modelName === 'claude-sonnet-4-5-thinking') return 'claude-sonnet-4-5';
-    if (modelName === 'claude-opus-4-5') return 'claude-opus-4-5-thinking';
-    if (modelName === 'gemini-2.5-flash-thinking') return 'gemini-2.5-flash';
-    if (modelName === 'gemini-3-pro-preview') return 'gemini-3-pro-high';
-    return modelName;
+    // 移除思考预算后缀，映射到实际 API 模型名
+    let baseName = modelName.replace(/-1k$/, '').replace(/-4k$/, '').replace(/-8k$/, '');
+
+    // 所有 Claude 模型都必须使用 -thinking 版本（API 只支持 thinking 版本）
+    // claude-opus-4-5 或 claude-opus-4-5-thinking -> claude-opus-4-5-thinking
+    if (baseName === 'claude-opus-4-5' || baseName === 'claude-opus-4-5-thinking') {
+        return 'claude-opus-4-5-thinking';
+    }
+    // claude-sonnet-4-5 或 claude-sonnet-4-5-thinking -> claude-sonnet-4-5-thinking
+    if (baseName === 'claude-sonnet-4-5' || baseName === 'claude-sonnet-4-5-thinking') {
+        return 'claude-sonnet-4-5-thinking';
+    }
+    if (baseName === 'gemini-2.5-flash-thinking') return 'gemini-2.5-flash';
+    if (baseName === 'gemini-3-pro-preview') return 'gemini-3-pro-high';
+    return baseName;
 }
 
 export function generateAntigravityRequestBody(
@@ -132,18 +163,24 @@ export function generateAntigravityRequestBody(
     const normalized = normalizeParams(params);
     const stopSeqs = normalized.stop ?? ['<|user|>', '<|bot|>', '<|context_request|>', '<|endoftext|>', '<|end_of_turn|>'];
 
+    const thinkingBudget = getThinkingBudget(modelName);
+
     const generationConfig: any = {
         topP: normalized.topP,
         topK: normalized.topK,
         temperature: normalized.temperature,
         candidateCount: 1,
         maxOutputTokens: normalized.maxTokens,
-        stopSequences: stopSeqs,
-        thinkingConfig: {
-            includeThoughts: enableThinking,
-            thinkingBudget: enableThinking ? 1024 : 0
-        }
+        stopSequences: stopSeqs
     };
+
+    // 只有启用思考且预算 > 0 时才添加 thinkingConfig
+    if (enableThinking && thinkingBudget > 0) {
+        generationConfig.thinkingConfig = {
+            includeThoughts: true,
+            thinkingBudget: thinkingBudget
+        };
+    }
 
     if (enableThinking && actualModelName.includes('claude')) {
         delete generationConfig.topP;

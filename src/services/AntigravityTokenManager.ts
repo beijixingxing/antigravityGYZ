@@ -152,14 +152,18 @@ export class AntigravityTokenManager {
     }
 
     /**
-     * Get available Token (round-robin)
+     * Get available Token (优化轮询：优先选择最久未使用的 Token)
      */
     async getToken(): Promise<AntigravityTokenData | null> {
         const now = new Date();
+        const minInterval = 2000; // 同一 Token 最少间隔 2 秒
 
         // 先检查并恢复冷却过期的凭证
         await this.checkCoolingTokens();
 
+        // 按 last_used_at 升序排序，优先使用最久未使用的 Token
+        // 注意：last_used_at 为 NULL 的（从未使用）应该排在最前面
+        // 只取前 50 个，提升大量凭证场景的性能
         const tokens = await prisma.antigravityToken.findMany({
             where: {
                 is_enabled: true,
@@ -169,17 +173,27 @@ export class AntigravityTokenManager {
                     { cooling_until: { lte: now } }
                 ]
             },
-            orderBy: { id: 'asc' }
+            orderBy: [
+                // Prisma 默认 NULL 排在最前面（NULLS FIRST），这正是我们要的
+                { last_used_at: 'asc' }
+            ],
+            take: 50 // 只取前 50 个，够用了
         });
 
         if (tokens.length === 0) {
             return null;
         }
 
-        const totalTokens = tokens.length;
-        for (let i = 0; i < totalTokens; i++) {
-            const index = (this.currentIndex + i) % totalTokens;
-            const token = tokens[index];
+        // 尝试找一个符合间隔要求的 Token
+        for (const token of tokens) {
+            // 检查使用间隔
+            if (token.last_used_at) {
+                const elapsed = now.getTime() - token.last_used_at.getTime();
+                if (elapsed < minInterval) {
+                    // 这个 Token 用得太频繁，跳过
+                    continue;
+                }
+            }
 
             // Check if expired
             if (this.isExpired(token)) {
@@ -190,11 +204,14 @@ export class AntigravityTokenManager {
                 const refreshedToken = await prisma.antigravityToken.findUnique({ where: { id: token.id } });
                 if (!refreshedToken) continue;
 
-                this.currentIndex = (index + 1) % totalTokens;
+                // Update last used time
+                await prisma.antigravityToken.update({
+                    where: { id: token.id },
+                    data: { last_used_at: new Date() }
+                }).catch(() => { });
+
                 return this.toTokenData(refreshedToken);
             }
-
-            // Allow tokens without project_id (some accounts can work without it)
 
             // Update last used time
             await prisma.antigravityToken.update({
@@ -202,8 +219,31 @@ export class AntigravityTokenManager {
                 data: { last_used_at: new Date() }
             }).catch(() => { });
 
-            this.currentIndex = (index + 1) % totalTokens;
             return this.toTokenData(token);
+        }
+
+        // 如果所有 Token 都在间隔内，退而求其次：用最久未使用的那个
+        const fallbackToken = tokens[0];
+        if (fallbackToken) {
+            if (this.isExpired(fallbackToken)) {
+                const success = await this.refreshToken(fallbackToken.id);
+                if (success) {
+                    const refreshedToken = await prisma.antigravityToken.findUnique({ where: { id: fallbackToken.id } });
+                    if (refreshedToken) {
+                        await prisma.antigravityToken.update({
+                            where: { id: fallbackToken.id },
+                            data: { last_used_at: new Date() }
+                        }).catch(() => { });
+                        return this.toTokenData(refreshedToken);
+                    }
+                }
+            } else {
+                await prisma.antigravityToken.update({
+                    where: { id: fallbackToken.id },
+                    data: { last_used_at: new Date() }
+                }).catch(() => { });
+                return this.toTokenData(fallbackToken);
+            }
         }
 
         return null;

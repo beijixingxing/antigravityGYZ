@@ -26,9 +26,18 @@ export const ANTIGRAVITY_CONFIG = {
 
 // 支持的反重力渠道模型
 export const ANTIGRAVITY_MODELS = [
-  'claude-opus-4-5',
+  // Claude Opus 4.5 系列
+  'claude-opus-4-5',                    // 纯净版，无思考
+  'claude-opus-4-5-thinking-1k',        // 1k 思考预算
+  'claude-opus-4-5-thinking-4k',
+  'claude-opus-4-5-thinking-8k',
+  // Gemini 3 Pro 系列
   'gemini-3-pro-preview',
-  'claude-sonnet-4-5'
+  // Claude Sonnet 4.5 系列
+  'claude-sonnet-4-5',                  // 纯净版，无思考
+  'claude-sonnet-4-5-thinking-1k',      // 1k 思考预算
+  'claude-sonnet-4-5-thinking-4k',
+  'claude-sonnet-4-5-thinking-8k'
 ];
 
 // 模型后缀（用于在前端展示并进行路由分流）

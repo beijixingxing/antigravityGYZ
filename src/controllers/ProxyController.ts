@@ -110,10 +110,15 @@ export class ProxyController {
         const isSharedMode = setting ? setting.value === 'true' : true; // Default to Shared
 
         if (!isSharedMode && !isAdminKey) {
-            const isContributor = activeCredCount > 0;
+            const hasCliCredential = activeCredCount > 0;
+            // 检查用户是否上传过反重力凭证（任意状态都算，只要上传过）
+            const hasAntigravityToken = await prisma.antigravityToken.count({
+                where: { owner_id: user.id }
+            }) > 0;
             const isAdmin = user.role === 'ADMIN';
 
-            if (!isAdmin && !isContributor) {
+            // 只要有 CLI 凭证或反重力凭证任意一种，即视为贡献者
+            if (!isAdmin && !hasCliCredential && !hasAntigravityToken) {
                 return reply.code(403).send({
                     error: 'Access Denied. Shared Mode is disabled. Please upload a valid credential to use the service.'
                 });
@@ -336,22 +341,22 @@ export class ProxyController {
         const strictSetting = await prisma.systemSetting.findUnique({ where: { key: 'ANTIGRAVITY_STRICT_MODE' } });
         const strictMode = strictSetting ? strictSetting.value === 'true' : false;
 
-        // Note: Strict mode restriction "only users with uploaded credentials can use antigravity" has been removed as per request.
-        // Users are now only limited by quota/tokens.
-        // if (!isAdminKey && user.role !== 'ADMIN' && strictMode) {
-        //     const hasAccess = await antigravityTokenManager.hasAntigravityAccess(user.id);
-        //     if (!hasAccess) {
-        //         console.warn('[Antigravity] Strict mode enabled, user without valid credential blocked:', user.id);
-        //         return reply.code(403).send({
-        //             error: {
-        //                 message: '🔒 已开启反重力严格模式：仅上传过有效凭证的用户可以使用反重力渠道。',
-        //                 type: 'forbidden'
-        //             }
-        //         });
-        //     }
-        // }
+        // 严格模式：只有上传过反重力凭证的用户才能使用反重力渠道
+        if (!isAdminKey && user.role !== 'ADMIN' && strictMode) {
+            const hasAccess = await antigravityTokenManager.hasAntigravityAccess(user.id);
+            if (!hasAccess) {
+                console.warn('[Antigravity] Strict mode enabled, user without valid credential blocked:', user.id);
+                return reply.code(403).send({
+                    error: {
+                        message: '🔒 已开启反重力严格模式：仅上传过有效凭证的用户可以使用反重力渠道。',
+                        type: 'forbidden'
+                    }
+                });
+            }
+        }
 
-        if (!isAdminKey && strictMode) {
+        // 配额检查（无论严格模式是否开启都检查）
+        if (!isAdminKey) {
             const userOverride = group === 'gemini3' ? user.ag_gemini3_limit : user.ag_claude_limit;
             const effectiveLimit = (userOverride && userOverride > 0) ? userOverride : computedLimit;
 
@@ -549,27 +554,29 @@ export class ProxyController {
         } catch (error: any) {
             console.error('[Antigravity] 请求失败:', error.message);
 
-            // 处理 429 错误 (连续 3 次才冷却)
+            // 处理 429 错误
             if (error.message.includes('429')) {
                 const currentToken = await prisma.antigravityToken.findUnique({ where: { id: token.id } });
                 const newFailCount = (currentToken?.fail_count || 0) + 1;
 
                 if (newFailCount >= 3) {
-                    // 连续 3 次 429，进入冷却 (5小时)
-                    await antigravityTokenManager.markAsCooling(token.id, 5 * 60 * 60 * 1000);
+                    // 连续 3 次 429，进入长期冷却 (3小时)
+                    await antigravityTokenManager.markAsCooling(token.id, 3 * 60 * 60 * 1000);
                     // 重置计数
                     await prisma.antigravityToken.update({
                         where: { id: token.id },
                         data: { fail_count: 0 }
                     });
-                    console.log(`[Antigravity] Token #${token.id} 连续 3 次 429，进入冷却 5 小时`);
+                    console.log(`[Antigravity] Token #${token.id} 连续 3 次 429，进入冷却 3 小时`);
                 } else {
+                    // 单次 429，立即进入短期冷却 (5分钟)
+                    await antigravityTokenManager.markAsCooling(token.id, 5 * 60 * 1000);
                     // 增加计数
                     await prisma.antigravityToken.update({
                         where: { id: token.id },
                         data: { fail_count: newFailCount }
                     });
-                    console.log(`[Antigravity] Token #${token.id} 429 次数: ${newFailCount}/3`);
+                    console.log(`[Antigravity] Token #${token.id} 429 次数: ${newFailCount}/3，短期冷却 5 分钟`);
                 }
             }
             if (error.message.includes('403')) {

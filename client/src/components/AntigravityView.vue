@@ -268,29 +268,7 @@
           </div>
         </div>
 
-        <!-- Antigravity Strict Mode -->
-        <div class="glow-card bg-white/5 backdrop-blur-xl border border-red-500/30 rounded-2xl md:rounded-3xl p-5 md:p-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <h3 class="text-sm md:text-base font-bold text-red-300 flex items-center gap-2">
-              <span>🚦 反重力严格模式</span>
-            </h3>
-            <p class="text-xs md:text-sm text-red-100/80 mt-1">
-              开启后，未上传有效反重力凭证的普通用户将无法使用反重力渠道模型。
-            </p>
-          </div>
-          <button
-            @click="toggleAgStrictMode"
-            :disabled="togglingStrict"
-            class="relative inline-flex h-8 w-16 items-center rounded-full transition-all focus:outline-none"
-            :class="agStrictMode ? 'bg-red-500' : 'bg-gray-500/60'"
-          >
-            <span class="sr-only">切换反重力严格模式</span>
-            <span
-              class="inline-block h-6 w-6 transform rounded-full bg-white transition-transform shadow ring-0"
-              :class="agStrictMode ? 'translate-x-8' : 'translate-x-1'"
-            />
-          </button>
-        </div>
+        <!-- Antigravity Strict Mode 已移至【管理设置】页面统一管理 -->
 
         <!-- Token 列表 -->
         <div class="glow-card bg-white/5 backdrop-blur-xl border border-purple-500/30 rounded-2xl md:rounded-3xl overflow-hidden">
@@ -432,8 +410,7 @@ const agOverview = ref<any | null>(null);
 const agConfig = ref<any | null>(null);
 const loadingTokens = ref(false);
 const refreshing = ref(false);
-const agStrictMode = ref(false);
-const togglingStrict = ref(false);
+// agStrictMode 和 togglingStrict 已移至【管理设置】页面
 
 // Usage Dashboard removed
 
@@ -666,34 +643,7 @@ const fetchAgConfig = async () => {
   }
 };
 
-const fetchAgStrictMode = async () => {
-  if (!isAdmin.value) return;
-  try {
-    const res = await api.get('/admin/settings');
-    agStrictMode.value = !!res.data.antigravity_strict_mode;
-  } catch (e) {
-    console.error('Failed to fetch antigravity strict mode', e);
-  }
-};
-
-const toggleAgStrictMode = async () => {
-  if (!isAdmin.value) return;
-  togglingStrict.value = true;
-  try {
-    const newValue = !agStrictMode.value;
-    await api.post('/admin/settings', { antigravity_strict_mode: newValue });
-    agStrictMode.value = newValue;
-    message.value = newValue
-      ? '已开启反重力严格模式：未上传有效凭证的用户将无法使用反重力渠道。'
-      : '已关闭反重力严格模式：未上传凭证的用户也可使用反重力渠道（按全局限额计费）。';
-    messageType.value = 'success';
-  } catch (e: any) {
-    message.value = '更新反重力严格模式失败: ' + (e.response?.data?.error || e.message);
-    messageType.value = 'error';
-  } finally {
-    togglingStrict.value = false;
-  }
-};
+// 严格模式已移至【管理设置】页面统一管理
 
 // Usage Dashboard removed
 
@@ -757,7 +707,6 @@ onMounted(() => {
     fetchTokens();
     fetchAgOverview();
     fetchAgConfig();
-    fetchAgStrictMode();
   }
 });
 </script>
