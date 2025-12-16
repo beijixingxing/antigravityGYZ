@@ -162,12 +162,14 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     const userAgClaudeOverride = (user as any).ag_claude_limit || 0;
     const userAgGemini3Override = (user as any).ag_gemini3_limit || 0;
 
+    // 用户的 Antigravity Token 数量 (ACTIVE + COOLING)
+    // 冷却的凭证仍然算入配额增量，只有 DEAD 的不算
     const userAgTokenCount = await prisma.antigravityToken.count({
-      where: { owner_id: userId, status: 'ACTIVE', is_enabled: true }
+      where: { owner_id: userId, status: { in: ['ACTIVE', 'COOLING'] }, is_enabled: true }
     });
 
-    const baseClaude = useTokenQuota ? (agConfig.claude_token_quota || 100000) : (agConfig.claude_limit || 100);
-    const baseGemini3 = useTokenQuota ? (agConfig.gemini3_token_quota || 200000) : (agConfig.gemini3_limit || 200);
+    const baseClaude = useTokenQuota ? (agConfig.claude_token_quota ?? 100000) : (agConfig.claude_limit ?? 100);
+    const baseGemini3 = useTokenQuota ? (agConfig.gemini3_token_quota ?? 200000) : (agConfig.gemini3_limit ?? 200);
 
     const incClaude = useTokenQuota ? (agConfig.increment_token_per_token_claude || 0) : (agConfig.increment_per_token_claude || 0);
     const incGemini3 = useTokenQuota ? (agConfig.increment_token_per_token_gemini3 || 0) : (agConfig.increment_per_token_gemini3 || 0);

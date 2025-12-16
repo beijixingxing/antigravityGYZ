@@ -156,6 +156,10 @@ export class AntigravityTokenManager {
      */
     async getToken(): Promise<AntigravityTokenData | null> {
         const now = new Date();
+
+        // 先检查并恢复冷却过期的凭证
+        await this.checkCoolingTokens();
+
         const tokens = await prisma.antigravityToken.findMany({
             where: {
                 is_enabled: true,
@@ -169,8 +173,6 @@ export class AntigravityTokenManager {
         });
 
         if (tokens.length === 0) {
-            // Check for cooling tokens
-            await this.checkCoolingTokens();
             return null;
         }
 
@@ -216,18 +218,22 @@ export class AntigravityTokenManager {
                 status: AntigravityTokenStatus.COOLING,
                 cooling_until: { lte: new Date() }
             },
-            data: { status: AntigravityTokenStatus.ACTIVE }
+            data: {
+                status: AntigravityTokenStatus.ACTIVE,
+                cooling_until: null
+            }
         });
     }
 
     /**
-     * Mark Token as cooling (不改变状态，只设置冷却时间)
+     * Mark Token as cooling (设置 COOLING 状态和冷却时间)
      */
     async markAsCooling(tokenId: number, cooldownMs: number = 60000): Promise<void> {
         console.log(`[AntigravityTokenManager] Token #${tokenId} entering cooldown for ${cooldownMs}ms`);
         await prisma.antigravityToken.update({
             where: { id: tokenId },
             data: {
+                status: AntigravityTokenStatus.COOLING,
                 cooling_until: new Date(Date.now() + cooldownMs)
             }
         });

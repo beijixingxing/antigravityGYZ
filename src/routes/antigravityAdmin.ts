@@ -175,9 +175,10 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
         const claudeTokens = parseInt(tokensUsage?.claude || '0', 10);
         const gemini3Tokens = parseInt(tokensUsage?.gemini3 || '0', 10);
 
-        // 2. Get Token Count (Active)
+        // 2. Get Token Count (Active + Cooling)
+        // 冷却的凭证仍然算入容量，只有 DEAD 的不算
         const activeTokens = await prisma.antigravityToken.count({
-            where: { status: 'ACTIVE', is_enabled: true }
+            where: { status: { in: ['ACTIVE', 'COOLING'] }, is_enabled: true }
         });
 
         // 3. Get Config for Limits
@@ -937,12 +938,15 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
                         action: '已失效'
                     });
                 } else if (msg.includes('429')) {
-                    // 429 错误冷却 5 小时
+                    // 429 错误冷却 5 小时 (同时设置 COOLING 状态)
                     const cooldownTime = new Date(Date.now() + 5 * 60 * 60 * 1000);
 
                     await prisma.antigravityToken.update({
                         where: { id: token.id },
-                        data: { cooling_until: cooldownTime }
+                        data: {
+                            status: 'COOLING',
+                            cooling_until: cooldownTime
+                        }
                     });
 
                     results.cooled++;

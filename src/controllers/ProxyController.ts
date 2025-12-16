@@ -308,9 +308,14 @@ export class ProxyController {
             ? (group === 'gemini3' ? gemini3TokenQuota : claudeTokenQuota)
             : (group === 'gemini3' ? gemini3Limit : claudeLimit);
 
-        // Calculate Increment based on User's Active Credentials
+        // Calculate Increment based on User's Tokens (ACTIVE + COOLING)
+        // 冷却的凭证仍然算入配额增量，只有 DEAD 的不算
         const userTokenCount = await prisma.antigravityToken.count({
-            where: { owner_id: user.id, status: 'ACTIVE', is_enabled: true }
+            where: {
+                owner_id: user.id,
+                status: { in: ['ACTIVE', 'COOLING'] },
+                is_enabled: true
+            }
         });
 
         const inc = useTokenQuota
@@ -550,14 +555,14 @@ export class ProxyController {
                 const newFailCount = (currentToken?.fail_count || 0) + 1;
 
                 if (newFailCount >= 3) {
-                    // 连续 3 次 429，进入冷却
-                    await antigravityTokenManager.markAsCooling(token.id);
+                    // 连续 3 次 429，进入冷却 (5小时)
+                    await antigravityTokenManager.markAsCooling(token.id, 5 * 60 * 60 * 1000);
                     // 重置计数
                     await prisma.antigravityToken.update({
                         where: { id: token.id },
                         data: { fail_count: 0 }
                     });
-                    console.log(`[Antigravity] Token #${token.id} 连续 3 次 429，进入冷却`);
+                    console.log(`[Antigravity] Token #${token.id} 连续 3 次 429，进入冷却 5 小时`);
                 } else {
                     // 增加计数
                     await prisma.antigravityToken.update({
