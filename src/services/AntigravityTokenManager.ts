@@ -375,13 +375,14 @@ export class AntigravityTokenManager {
     }
 
     /**
-     * Get Token list with pagination and sorting
+     * Get Token list with pagination, sorting, and optional status filter
      */
     async getTokenList(
         page: number = 1,
         limit: number = 10,
         sortBy: string = 'id',
-        order: 'asc' | 'desc' = 'asc'
+        order: 'asc' | 'desc' = 'asc',
+        status?: string
     ): Promise<{ tokens: any[], total: number }> {
         const skip = (page - 1) * limit;
         const orderBy: any = {};
@@ -393,12 +394,43 @@ export class AntigravityTokenManager {
             orderBy.id = order;
         }
 
+        let whereClause: any = {};
+
+        // Handle DUPLICATE filter - find emails that appear more than once
+        if (status === 'DUPLICATE') {
+            const duplicates = await prisma.$queryRaw<{ email: string; count: bigint }[]>`
+                SELECT email, COUNT(*) as count
+                FROM "AntigravityToken"
+                WHERE email IS NOT NULL AND email != ''
+                GROUP BY email
+                HAVING COUNT(*) > 1
+            `;
+            const duplicateEmails = duplicates.map(d => d.email);
+
+            if (duplicateEmails.length === 0) {
+                return { tokens: [], total: 0 };
+            }
+
+            whereClause = { email: { in: duplicateEmails } };
+        }
+
         const [total, tokens] = await prisma.$transaction([
-            prisma.antigravityToken.count(),
+            prisma.antigravityToken.count({ where: whereClause }),
             prisma.antigravityToken.findMany({
+                where: whereClause,
                 skip,
                 take: limit,
-                orderBy
+                orderBy: status === 'DUPLICATE' ? [{ email: 'asc' }, orderBy] : orderBy,
+                include: {
+                    owner: {
+                        select: {
+                            email: true,
+                            discordId: true,
+                            discordUsername: true,
+                            discordAvatar: true
+                        }
+                    }
+                }
             })
         ]);
 
@@ -415,7 +447,12 @@ export class AntigravityTokenManager {
                 ? new Date(Number(t.timestamp) + t.expires_in * 1000).toISOString()
                 : null,
             last_used_at: t.last_used_at,
-            created_at: t.created_at
+            created_at: t.created_at,
+            // Owner info with Discord
+            owner_email: (t as any).owner?.email || null,
+            owner_discord_id: (t as any).owner?.discordId || null,
+            owner_discord_username: (t as any).owner?.discordUsername || null,
+            owner_discord_avatar: (t as any).owner?.discordAvatar || null
         }));
 
         return { tokens: mappedTokens, total };

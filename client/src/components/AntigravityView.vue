@@ -276,7 +276,13 @@
             <h3 class="text-lg md:text-xl font-black text-white flex items-center gap-2">
               <span class="text-xl md:text-2xl">&#128203;</span> Token List
             </h3>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 flex-wrap">
+                <!-- Filter Dropdown -->
+                <select v-model="tokenStatus" @change="tokenPage=1; fetchTokens()"
+                    class="appearance-none bg-black/20 border border-white/10 pl-3 pr-8 py-1.5 text-purple-300 font-bold text-xs focus:outline-none focus:border-purple-500 cursor-pointer hover:bg-white/5 rounded-lg transition-all">
+                    <option value="">📋 全部</option>
+                    <option value="DUPLICATE">🔁 重复邮箱</option>
+                </select>
                 <div class="text-xs text-purple-300/70">第 {{ tokenPage }} / {{ tokenPageCount }} 页</div>
                 <button @click="prevTokenPage" :disabled="tokenPage<=1" class="px-2 py-1 bg-purple-600/30 hover:bg-purple-600/50 disabled:opacity-50 rounded-lg text-white text-xs font-bold"><</button>
                 <button @click="nextTokenPage" :disabled="tokenPage>=tokenPageCount" class="px-2 py-1 bg-purple-600/30 hover:bg-purple-600/50 disabled:opacity-50 rounded-lg text-white text-xs font-bold">></button>
@@ -294,6 +300,7 @@
                     ID <span v-if="tokenSortBy === 'id'">{{ tokenOrder === 'asc' ? '↑' : '↓' }}</span>
                   </th>
                   <th class="px-4 md:px-6 py-3 md:py-4 text-[10px] md:text-xs font-black text-purple-300/70 uppercase tracking-wider">邮箱</th>
+                  <th class="px-4 md:px-6 py-3 md:py-4 text-[10px] md:text-xs font-black text-purple-300/70 uppercase tracking-wider hidden md:table-cell">上传者</th>
                   <th @click="handleSort('total_used')" class="px-4 md:px-6 py-3 md:py-4 text-[10px] md:text-xs font-black text-purple-300/70 uppercase tracking-wider cursor-pointer hover:text-purple-200 select-none">
                     次数 <span v-if="tokenSortBy === 'total_used'">{{ tokenOrder === 'asc' ? '↑' : '↓' }}</span>
                   </th>
@@ -314,6 +321,22 @@
                   </td>
                   <td class="px-4 md:px-6 py-3 md:py-4 text-white text-xs md:text-sm truncate max-w-[120px] md:max-w-[200px]">
                     {{ token.email || '未知邮箱' }}
+                  </td>
+                  <!-- Owner column with Discord info -->
+                  <td class="px-4 md:px-6 py-3 md:py-4 hidden md:table-cell">
+                    <div class="flex items-center gap-2">
+                      <img v-if="token.owner_discord_avatar" 
+                           :src="`https://cdn.discordapp.com/avatars/${token.owner_discord_id}/${token.owner_discord_avatar}.png?size=32`"
+                           class="w-6 h-6 rounded-full border border-white/10 shadow-sm" />
+                      <div v-else class="w-6 h-6 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-[10px] text-white font-bold">
+                        {{ token.owner_email?.[0]?.toUpperCase() || '?' }}
+                      </div>
+                      <div class="flex flex-col">
+                        <span v-if="token.owner_discord_username" class="text-xs font-medium text-purple-200">{{ token.owner_discord_username }}</span>
+                        <span class="text-[10px] text-purple-300/60 font-mono">{{ token.owner_email || '未知' }}</span>
+                        <span v-if="token.owner_discord_id" class="text-[9px] text-purple-300/40 font-mono">ID: {{ token.owner_discord_id }}</span>
+                      </div>
+                    </div>
                   </td>
                   <td class="px-4 md:px-6 py-3 md:py-4 text-purple-300 text-xs md:text-sm">
                     {{ token.total_used || 0 }}
@@ -404,6 +427,7 @@ const tokenTotal = ref(0);
 const tokenPageCount = computed(() => Math.max(1, Math.ceil(tokenTotal.value / tokenLimit.value)));
 const tokenSortBy = ref('id');
 const tokenOrder = ref<'asc' | 'desc'>('asc');
+const tokenStatus = ref('');
 
 const stats = ref({ total: 0, active: 0, inactive: 0, total_capacity: 0, personal_max_usage: 0 });
 const agOverview = ref<any | null>(null);
@@ -598,7 +622,8 @@ const fetchTokens = async () => {
             page: tokenPage.value,
             limit: tokenLimit.value,
             sort_by: tokenSortBy.value,
-            order: tokenOrder.value
+            order: tokenOrder.value,
+            status: tokenStatus.value || undefined
         }
     });
     tokens.value = res.data.tokens || [];

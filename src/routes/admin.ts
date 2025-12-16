@@ -395,7 +395,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
           skip: (page - 1) * limit,
           take: limit,
           include: {
-            owner: { select: { email: true } },
+            owner: { select: { email: true, discordId: true, discordUsername: true, discordAvatar: true } },
             usage_logs: {
               where: { status_code: { gte: 400 } },
               orderBy: { created_at: 'desc' },
@@ -412,6 +412,9 @@ export default async function adminRoutes(fastify: FastifyInstance) {
           id: c.id,
           name: c.client_id ? `...${c.client_id.slice(0, 15)}` : `Credential #${c.id}`,
           owner_email: c.owner.email,
+          owner_discord_id: c.owner.discordId,
+          owner_discord_username: c.owner.discordUsername,
+          owner_discord_avatar: c.owner.discordAvatar,
           google_email: c.google_email,
           status: c.status,
           fail_count: c.fail_count,
@@ -436,7 +439,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
         skip: (page - 1) * limit,
         take: limit,
         include: {
-          owner: { select: { email: true } },
+          owner: { select: { email: true, discordId: true, discordUsername: true, discordAvatar: true } },
           // Fetch latest error log (status >= 400)
           usage_logs: {
             where: { status_code: { gte: 400 } },
@@ -454,6 +457,9 @@ export default async function adminRoutes(fastify: FastifyInstance) {
         id: c.id,
         name: c.client_id ? `...${c.client_id.slice(0, 15)}` : `Credential #${c.id}`,
         owner_email: c.owner.email,
+        owner_discord_id: c.owner.discordId,
+        owner_discord_username: c.owner.discordUsername,
+        owner_discord_avatar: c.owner.discordAvatar,
         google_email: c.google_email,
         status: c.status,
         fail_count: c.fail_count,

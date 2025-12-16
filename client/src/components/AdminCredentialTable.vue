@@ -65,10 +65,20 @@
             <!-- Owner -->
             <td class="px-6 py-3 hidden md:table-cell">
               <div class="flex items-center gap-2">
-                <div class="w-6 h-6 rounded-full bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] flex items-center justify-center text-[10px] text-white font-bold border border-white/10 shadow-sm">
-                  {{ cred.owner_email[0].toUpperCase() }}
+                <!-- Discord Avatar or Email Initial -->
+                <img v-if="cred.owner_discord_avatar" 
+                     :src="`https://cdn.discordapp.com/avatars/${cred.owner_discord_id}/${cred.owner_discord_avatar}.png?size=32`"
+                     class="w-6 h-6 rounded-full border border-white/10 shadow-sm"
+                     :alt="cred.owner_discord_username" />
+                <div v-else class="w-6 h-6 rounded-full bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] flex items-center justify-center text-[10px] text-white font-bold border border-white/10 shadow-sm">
+                  {{ cred.owner_email?.[0]?.toUpperCase() || '?' }}
                 </div>
-                <span class="text-xs font-medium text-[#A5B4FC]">{{ cred.owner_email }}</span>
+                <!-- Discord Name or Email -->
+                <div class="flex flex-col">
+                  <span v-if="cred.owner_discord_username" class="text-xs font-medium text-[#A5B4FC]">{{ cred.owner_discord_username }}</span>
+                  <span class="text-[10px] text-[#A5B4FC]/60 font-mono" :class="{ 'text-xs text-[#A5B4FC]': !cred.owner_discord_username }">{{ cred.owner_email }}</span>
+                  <span v-if="cred.owner_discord_id" class="text-[9px] text-[#A5B4FC]/40 font-mono">ID: {{ cred.owner_discord_id }}</span>
+                </div>
               </div>
             </td>
 
@@ -175,6 +185,9 @@ interface Credential {
   id: number;
   name: string;
   owner_email: string;
+  owner_discord_id?: string;
+  owner_discord_username?: string;
+  owner_discord_avatar?: string;
   google_email?: string;
   status: string;
   fail_count: number;
