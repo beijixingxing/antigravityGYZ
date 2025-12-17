@@ -454,7 +454,7 @@ export class ProxyController {
                             usageTokens = data.usage?.total_tokens || 0;
                         }
 
-                        if (data.type === 'text' || data.type === 'thinking') {
+                        if (data.type === 'text') {
                             const chunk = {
                                 id: responseId,
                                 object: 'chat.completion.chunk',
@@ -463,6 +463,20 @@ export class ProxyController {
                                 choices: [{
                                     index: 0,
                                     delta: { content: data.content },
+                                    finish_reason: null
+                                }]
+                            };
+                            reply.raw.write(`data: ${JSON.stringify(chunk)}\n\n`);
+                        } else if (data.type === 'reasoning') {
+                            // 思维内容 -> reasoning_content 字段（和 CLI 一致）
+                            const chunk = {
+                                id: responseId,
+                                object: 'chat.completion.chunk',
+                                created,
+                                model: requestedModel,
+                                choices: [{
+                                    index: 0,
+                                    delta: { reasoning_content: data.content },
                                     finish_reason: null
                                 }]
                             };
@@ -529,7 +543,7 @@ export class ProxyController {
                     console.error('[Antigravity] 非流式请求计数失败:', e);
                 }
 
-                const { content, toolCalls, usage } = await AntigravityService.generateResponse(
+                const { content, reasoningContent, toolCalls, usage } = await AntigravityService.generateResponse(
                     openAIBody.messages,
                     realModel,
                     openAIBody,
@@ -556,6 +570,9 @@ export class ProxyController {
                 } catch { }
 
                 const message: any = { role: 'assistant', content };
+                if (reasoningContent) {
+                    message.reasoning_content = reasoningContent;
+                }
                 if (toolCalls.length > 0) {
                     message.tool_calls = toolCalls;
                 }

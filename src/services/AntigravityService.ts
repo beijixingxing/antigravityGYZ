@@ -8,7 +8,6 @@ import {
 } from '../utils/antigravityUtils';
 
 interface StreamState {
-    thinkingStarted: boolean;
     toolCalls: any[];
 }
 
@@ -32,6 +31,10 @@ export class AntigravityService {
 
     /**
      * 解析流式响应
+     * 采用和 CLI 相同的处理方式：
+     * - 思维内容 (thought=true) -> reasoning_content 字段
+     * - 普通文本 -> content 字段
+     * - 不使用 <think> 标签
      */
     private static parseStreamChunk(
         line: string,
@@ -44,24 +47,15 @@ export class AntigravityService {
             const data = JSON.parse(line.slice(6));
             const parts = data.response?.candidates?.[0]?.content?.parts;
 
-            if (parts) {
+            if (parts && parts.length > 0) {
                 for (const part of parts) {
                     if (part.thought === true) {
-                        // 思维内容片段
-                        if (!state.thinkingStarted) {
-                            callback({ type: 'thinking', content: '<think>\n' });
-                            state.thinkingStarted = true;
-                        }
-                        callback({ type: 'thinking', content: part.text || '' });
+                        // 思维内容 -> reasoning_content
+                        callback({ type: 'reasoning', content: part.text || '' });
                     } else if (part.text !== undefined) {
-                        // 普通文本片段
-                        if (state.thinkingStarted) {
-                            callback({ type: 'thinking', content: '\n</think>\n' });
-                            state.thinkingStarted = false;
-                        }
+                        // 普通文本 -> content
                         callback({ type: 'text', content: part.text });
                     } else if (part.functionCall) {
-                        // 工具调用
                         state.toolCalls.push({
                             id: part.functionCall.id || generateToolCallId(),
                             type: 'function',
@@ -76,14 +70,12 @@ export class AntigravityService {
 
             // 响应结束
             if (data.response?.candidates?.[0]?.finishReason) {
-                if (state.thinkingStarted) {
-                    callback({ type: 'thinking', content: '\n</think>\n' });
-                    state.thinkingStarted = false;
-                }
+                // 输出工具调用
                 if (state.toolCalls.length > 0) {
                     callback({ type: 'tool_calls', tool_calls: state.toolCalls });
                     state.toolCalls = [];
                 }
+
                 // Usage 统计
                 const usage = data.response?.usageMetadata;
                 if (usage) {
@@ -98,12 +90,12 @@ export class AntigravityService {
                 }
             }
         } catch (e) {
-            // ���Խ�������
+            // 忽略解析错误
         }
     }
 
     /**
-     * ������ʽ��Ӧ
+     * 流式响应
      */
     static async generateStreamResponse(
         messages: any[],
@@ -116,7 +108,9 @@ export class AntigravityService {
         const headers = this.buildHeaders(token);
         const requestBody = generateAntigravityRequestBody(messages, model, params, tools, token);
 
-        const state: StreamState = { thinkingStarted: false, toolCalls: [] };
+        const state: StreamState = {
+            toolCalls: []
+        };
         let buffer = '';
 
         const processChunk = (chunk: string) => {
@@ -169,7 +163,7 @@ export class AntigravityService {
         params: any,
         tools: any[] | undefined,
         token: AntigravityTokenData
-    ): Promise<{ content: string; toolCalls: any[]; usage: any }> {
+    ): Promise<{ content: string; reasoningContent: string; toolCalls: any[]; usage: any }> {
         const headers = this.buildHeaders(token);
         const requestBody = generateAntigravityRequestBody(messages, model, params, tools, token);
 
@@ -210,12 +204,12 @@ export class AntigravityService {
         const parts = data.response?.candidates?.[0]?.content?.parts || [];
 
         let content = '';
-        let thinkingContent = '';
+        let reasoningContent = '';
         const toolCalls: any[] = [];
 
         for (const part of parts) {
             if (part.thought === true) {
-                thinkingContent += part.text || '';
+                reasoningContent += part.text || '';
             } else if (part.text !== undefined) {
                 content += part.text;
             } else if (part.functionCall) {
@@ -230,11 +224,6 @@ export class AntigravityService {
             }
         }
 
-        // 拼接思维内容
-        if (thinkingContent) {
-            content = `<think>\n${thinkingContent}\n</think>\n${content}`;
-        }
-
         const usageData = data.response?.usageMetadata;
         const usage = usageData ? {
             prompt_tokens: usageData.promptTokenCount || 0,
@@ -242,7 +231,7 @@ export class AntigravityService {
             total_tokens: usageData.totalTokenCount || 0
         } : { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
-        return { content, toolCalls, usage };
+        return { content, reasoningContent, toolCalls, usage };
     }
 
 

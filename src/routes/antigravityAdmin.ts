@@ -189,12 +189,14 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
             try { config = { ...config, ...JSON.parse(setting.value) }; } catch (e) { }
         }
 
-        // 4. Calculate "Capacity" (Token Count * User Limit)
-        const claudeCapacityRequests = activeTokens * config.claude_limit;
-        const gemini3CapacityRequests = activeTokens * config.gemini3_limit;
+        // 4. Calculate "Capacity" (Fixed per-credential quota for admin view)
+        // Claude: 100 requests per credential, Gemini3: 250 requests per credential
+        const claudeCapacityRequests = activeTokens * 100;
+        const gemini3CapacityRequests = activeTokens * 250;
 
-        const claudeCapacityTokens = activeTokens * (config.claude_token_quota || 100000);
-        const gemini3CapacityTokens = activeTokens * (config.gemini3_token_quota || 200000);
+        // Token quotas: Claude 100k per credential, Gemini3 250k per credential
+        const claudeCapacityTokens = activeTokens * 100000;
+        const gemini3CapacityTokens = activeTokens * 250000;
 
         // 5. Get Antigravity Leaderboard (Top 25 by total usage)
         const useTokenQuota = !!(config as any).use_token_quota;
