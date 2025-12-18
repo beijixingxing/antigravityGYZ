@@ -73,16 +73,25 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   const DEFAULT_SYSTEM_CONFIG = {
     enable_registration: true,
     quota: {
-      newbie: 300,
-      contributor: 1500,
-      v3_contributor: 3000,
-      increment_per_credential: 1000
+      newbie: {
+        base: { flash: 300, pro: 0, v3: 0 },
+        increment: { flash: 0, pro: 0, v3: 0 }
+      },
+      contributor: {
+        base: { flash: 1500, pro: 100, v3: 0 },
+        increment: { flash: 1000, pro: 50, v3: 0 }
+      },
+      v3_contributor: {
+        base: { flash: 3000, pro: 200, v3: 50 },
+        increment: { flash: 1500, pro: 100, v3: 20 }
+      }
     },
     rate_limit: {
       newbie: 10,
       contributor: 60,
       v3_contributor: 120
-    }
+    },
+    strict_quota_mode: false
   };
 
   // --- User Dashboard Routes ---
@@ -109,7 +118,23 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     const configSetting = await prisma.systemSetting.findUnique({ where: { key: 'SYSTEM_CONFIG' } });
     let systemConfig = { ...DEFAULT_SYSTEM_CONFIG };
     if (configSetting) {
-      try { systemConfig = { ...systemConfig, ...JSON.parse(configSetting.value) }; } catch (e) { }
+      try {
+        const parsed = JSON.parse(configSetting.value);
+        // Deep merge to ensure structure exists
+        systemConfig = {
+          ...systemConfig,
+          ...parsed,
+          quota: {
+            newbie: { ...DEFAULT_SYSTEM_CONFIG.quota.newbie, ...(parsed.quota?.newbie || {}) },
+            contributor: { ...DEFAULT_SYSTEM_CONFIG.quota.contributor, ...(parsed.quota?.contributor || {}) },
+            v3_contributor: { ...DEFAULT_SYSTEM_CONFIG.quota.v3_contributor, ...(parsed.quota?.v3_contributor || {}) }
+          },
+          rate_limit: { ...DEFAULT_SYSTEM_CONFIG.rate_limit, ...(parsed.rate_limit || {}) }
+        };
+        
+        // Compatibility check: if base is missing (old config), use defaults
+        if (!systemConfig.quota.newbie.base) systemConfig.quota = DEFAULT_SYSTEM_CONFIG.quota;
+      } catch (e) { }
     }
     const agConfigSetting = await prisma.systemSetting.findUnique({ where: { key: 'ANTIGRAVITY_CONFIG' } });
     let agConfig: any = {
@@ -130,13 +155,44 @@ export default async function adminRoutes(fastify: FastifyInstance) {
 
     // Dynamic Quota Calculation
     const activeCredCount = user._count.credentials;
-    const quotaConf = systemConfig.quota || {};
-    let baseQuota = quotaConf.newbie ?? 300;
-    if (v3Count > 0) baseQuota = quotaConf.v3_contributor ?? 3000;
-    else if (activeCredCount > 0) baseQuota = quotaConf.contributor ?? 1500;
-    const inc = quotaConf.increment_per_credential ?? 1000;
-    const extra = Math.max(0, activeCredCount - 1) * inc;
-    const totalQuota = baseQuota + extra;
+    const quotaConf = systemConfig.quota || DEFAULT_SYSTEM_CONFIG.quota;
+
+    let level: 'newbie' | 'contributor' | 'v3_contributor' = 'newbie';
+    if (v3Count > 0) level = 'v3_contributor';
+    else if (activeCredCount > 0) level = 'contributor';
+
+    const levelConfig = quotaConf[level];
+    const baseQuotas = levelConfig.base;
+    const incQuotas = levelConfig.increment || { flash: 0, pro: 0, v3: 0 };
+
+    let totalQuotas = { flash: 0, pro: 0, v3: 0 };
+
+    const isStrictQuota = !!systemConfig.strict_quota_mode;
+
+    if (isStrictQuota && level === 'v3_contributor') {
+        // Strict Mode Logic for V3 Users
+        // v3Count is already fetched at line 112
+        const normalCount = Math.max(0, activeCredCount - v3Count);
+
+        const extraV3 = Math.max(0, v3Count - 1);
+        const extraNormal = normalCount;
+
+        const contributorInc = quotaConf['contributor'].increment || { flash: 0, pro: 0, v3: 0 };
+
+        totalQuotas = {
+            flash: (baseQuotas.flash || 0) + extraV3 * (incQuotas.flash || 0) + extraNormal * (contributorInc.flash || 0),
+            pro: (baseQuotas.pro || 0) + extraV3 * (incQuotas.pro || 0) + extraNormal * (contributorInc.pro || 0),
+            v3: (baseQuotas.v3 || 0) + extraV3 * (incQuotas.v3 || 0) + extraNormal * (contributorInc.v3 || 0)
+        };
+    } else {
+        // Standard Logic
+        const extraCreds = (level === 'newbie') ? 0 : Math.max(0, activeCredCount - 1);
+        totalQuotas = {
+            flash: (baseQuotas.flash || 0) + extraCreds * (incQuotas.flash || 0),
+            pro: (baseQuotas.pro || 0) + extraCreds * (incQuotas.pro || 0),
+            v3: (baseQuotas.v3 || 0) + extraCreds * (incQuotas.v3 || 0)
+        };
+    }
 
     // Fetch Redis Model Stats (使用 UTC+8 时区，与 today_used 重置时间一致)
     const now = new Date();
@@ -245,13 +301,14 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     return {
       id: user.id,
       email: user.email,
+      username: user.username,
       role: user.role,
       level: user.level,
       discordId: (user as any).discordId || null,
       discordUsername: (user as any).discordUsername || null,
       discordAvatar: (user as any).discordAvatar || null,
-      daily_limit: totalQuota, // Dynamic limit
-      today_used: user.today_used,
+      daily_limit: totalQuotas, // Dynamic limit for each model
+      today_used: user.today_used, // This is now legacy, model_usage is the source of truth
       model_usage: modelUsage,
       antigravity_usage: agUsage,
       contributed_active: user._count.credentials,
@@ -267,20 +324,25 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   // Get Announcement
   fastify.get('/api/announcement', async (req: FastifyRequest) => {
     const setting = await prisma.systemSetting.findUnique({ where: { key: 'ANNOUNCEMENT_DATA' } });
-    if (!setting) return { content: '', version: 0 };
+    if (!setting) return { content: '', version: 0, duration: 5 };
     try {
       return JSON.parse(setting.value);
     } catch (e) {
-      return { content: '', version: 0 };
+      return { content: '', version: 0, duration: 5 };
     }
   });
 
   // Update Announcement (Admin)
   fastify.post('/api/admin/announcement', { preHandler: requireAdmin }, async (req: FastifyRequest) => {
     console.log('[Admin] Received announcement update:', req.body);
-    const body = z.object({ content: z.string() }).parse(req.body);
+    const body = z.object({
+        content: z.string(),
+        duration: z.number().min(0).optional()
+    }).parse(req.body);
+    
     const data = {
       content: body.content,
+      duration: body.duration ?? 5,
       version: Date.now() // Use timestamp as version
     };
 
@@ -666,9 +728,19 @@ export default async function adminRoutes(fastify: FastifyInstance) {
         const parsed = JSON.parse(configSetting.value);
         config = {
           enable_registration: parsed.enable_registration ?? config.enable_registration,
-          quota: { ...config.quota, ...parsed.quota },
-          rate_limit: { ...config.rate_limit, ...parsed.rate_limit }
+          strict_quota_mode: parsed.strict_quota_mode ?? config.strict_quota_mode,
+          quota: {
+            newbie: { ...DEFAULT_SYSTEM_CONFIG.quota.newbie, ...(parsed.quota?.newbie || {}) },
+            contributor: { ...DEFAULT_SYSTEM_CONFIG.quota.contributor, ...(parsed.quota?.contributor || {}) },
+            v3_contributor: { ...DEFAULT_SYSTEM_CONFIG.quota.v3_contributor, ...(parsed.quota?.v3_contributor || {}) }
+          },
+          rate_limit: { ...DEFAULT_SYSTEM_CONFIG.rate_limit, ...(parsed.rate_limit || {}) }
         };
+
+        // Compatibility: If parsed.quota.newbie is a number (old format), ignore it or migrate
+        if (typeof parsed.quota?.newbie === 'number') {
+             config.quota = DEFAULT_SYSTEM_CONFIG.quota;
+        }
       } catch (e) { }
     }
 
@@ -706,6 +778,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     // Merge updates
     const newConfig = {
       enable_registration: body.enable_registration ?? currentConfig.enable_registration,
+      strict_quota_mode: body.strict_quota_mode ?? currentConfig.strict_quota_mode,
       quota: {
         ...currentConfig.quota,
         ...(body.quota || {})
@@ -745,12 +818,17 @@ export default async function adminRoutes(fastify: FastifyInstance) {
 
   // 8. List Users (Pagination + Search)
   fastify.get('/api/admin/users', { preHandler: requireAdmin }, async (req: FastifyRequest) => {
-    const query = req.query as { page?: string, limit?: string, search?: string, discord_unbound?: string, errors_today?: string };
+    const query = req.query as { page?: string, limit?: string, search?: string, discord_unbound?: string, errors_today?: string, sortBy?: string, sortOrder?: 'asc' | 'desc' };
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 10;
     const search = query.search || '';
     const discordUnbound = String(query.discord_unbound || '').toLowerCase() === 'true';
     const errorsToday = String(query.errors_today || '').toLowerCase() === 'true';
+
+    const allowedSortBy = ['email', 'is_active', 'today_used', 'created_at', 'id'];
+    const sortBy = query.sortBy && allowedSortBy.includes(query.sortBy) ? query.sortBy : 'created_at';
+    const sortOrder = query.sortOrder || 'desc';
+    const orderBy = { [sortBy]: sortOrder };
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
 
@@ -771,7 +849,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
         where: whereClause,
         skip: (page - 1) * limit,
         take: limit,
-        orderBy: { id: 'desc' },
+        orderBy,
         include: {
           _count: { select: { credentials: true } }
         }

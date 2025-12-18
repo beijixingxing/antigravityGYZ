@@ -31,6 +31,30 @@ const DEFAULT_SAFETY_SETTINGS = [
     { category: "HARM_CATEGORY_CIVIC_INTEGRITY", threshold: "BLOCK_NONE" },
 ];
 
+const DEFAULT_SYSTEM_CONFIG = {
+    enable_registration: true,
+    quota: {
+      newbie: {
+        base: { flash: 300, pro: 0, v3: 0 },
+        increment: { flash: 0, pro: 0, v3: 0 }
+      },
+      contributor: {
+        base: { flash: 1500, pro: 100, v3: 0 },
+        increment: { flash: 1000, pro: 50, v3: 0 }
+      },
+      v3_contributor: {
+        base: { flash: 3000, pro: 200, v3: 50 },
+        increment: { flash: 1500, pro: 100, v3: 20 }
+      }
+    },
+    rate_limit: {
+      newbie: 10,
+      contributor: 60,
+      v3_contributor: 120
+    },
+    strict_quota_mode: false
+};
+
 function getAvailableModels() {
     // Cloud Code 渠道模型
     const cloudCodeModels = [
@@ -127,42 +151,122 @@ export class ProxyController {
         }
 
         if (!isAdminKey) {
-            // Fetch System Config
+            // --- New Granular Quota & Rate Limit Logic ---
             const configSetting = await prisma.systemSetting.findUnique({ where: { key: 'SYSTEM_CONFIG' } });
-            let rateLimit = 10; // Default Newbie
-            let baseQuota = 300; // Default Newbie Quota
-
+            let systemConfig = { ...DEFAULT_SYSTEM_CONFIG };
             if (configSetting) {
                 try {
-                    const conf = JSON.parse(configSetting.value);
-                    const limits = conf.rate_limit || {};
-
-                    // Rate Limit Logic (Keep as is, based on level/V3)
-                    if (activeV3CredCount > 0) rateLimit = limits.v3_contributor ?? 120;
-                    else if (activeCredCount > 0) rateLimit = limits.contributor ?? 60;
-                    else rateLimit = limits.newbie ?? 10;
-
-                    const quotaConf = conf.quota || {};
-                    if (activeV3CredCount > 0) {
-                        baseQuota = quotaConf.v3_contributor ?? 3000;
-                    } else if (activeCredCount > 0) {
-                        baseQuota = quotaConf.contributor ?? 1500;
-                    } else {
-                        baseQuota = quotaConf.newbie ?? 300;
-                    }
-                } catch (e) { }
+                    const dbConfig = JSON.parse(configSetting.value);
+                    // Deep merge for quota and rate_limit
+                    systemConfig = {
+                        ...systemConfig,
+                        ...dbConfig,
+                        quota: {
+                            newbie: {
+                                base: { ...systemConfig.quota.newbie.base, ...(dbConfig.quota?.newbie?.base || {}) },
+                                increment: { ...systemConfig.quota.newbie.increment, ...(dbConfig.quota?.newbie?.increment || {}) }
+                            },
+                            contributor: {
+                                base: { ...systemConfig.quota.contributor.base, ...(dbConfig.quota?.contributor?.base || {}) },
+                                increment: { ...systemConfig.quota.contributor.increment, ...(dbConfig.quota?.contributor?.increment || {}) }
+                            },
+                            v3_contributor: {
+                                base: { ...systemConfig.quota.v3_contributor.base, ...(dbConfig.quota?.v3_contributor?.base || {}) },
+                                increment: { ...systemConfig.quota.v3_contributor.increment, ...(dbConfig.quota?.v3_contributor?.increment || {}) }
+                            }
+                        },
+                        rate_limit: {
+                            ...systemConfig.rate_limit,
+                            ...(dbConfig.rate_limit || {})
+                        }
+                    };
+                } catch (e) { /* Use default on parse error */ }
             }
 
-            const systemSetting = await prisma.systemSetting.findUnique({ where: { key: 'SYSTEM_CONFIG' } });
-            const conf = (() => {
-                try { return JSON.parse(systemSetting?.value || '{}'); } catch { return {}; }
-            })();
-            const inc = (conf.quota?.increment_per_credential ?? 1000);
-            const extra = Math.max(0, activeCredCount - 1) * inc;
-            const totalQuota = baseQuota + extra;
+            const quotaConfig = systemConfig.quota;
+            const rateLimitConfig = systemConfig.rate_limit;
 
-            if (user.today_used >= totalQuota) {
-                return reply.code(402).send({ error: `Daily quota exceeded (${user.today_used}/${totalQuota})` });
+            // 1. Determine User Level
+            let level: 'newbie' | 'contributor' | 'v3_contributor' = 'newbie';
+            if (activeV3CredCount > 0) level = 'v3_contributor';
+            else if (activeCredCount > 0) level = 'contributor';
+
+            // 2. Determine Rate Limit
+            const rateLimit = rateLimitConfig[level];
+
+            // 3. Determine Model Type for Quota Check
+            const requestedModel = (req.body as any).model || '';
+            let modelType: 'flash' | 'pro' | 'v3' | 'unknown' = 'unknown';
+            if (requestedModel.includes('flash')) modelType = 'flash';
+            else if (requestedModel.includes('2.5-pro')) modelType = 'pro';
+            else if (requestedModel.includes('3-pro')) modelType = 'v3';
+
+            // 4. Calculate Specific Quota
+            if (modelType !== 'unknown') {
+                const levelConfig = quotaConfig[level];
+                const baseQuotas = levelConfig.base;
+                const incQuotas = levelConfig.increment;
+
+                let modelQuota = 0;
+
+                // Check Strict Mode
+                const isStrictQuota = !!systemConfig.strict_quota_mode;
+
+                if (isStrictQuota && level === 'v3_contributor') {
+                    // Strict Mode Logic for V3 Users
+                    // 2.5 Creds -> Contributor Increment
+                    // 3.0 Creds -> V3 Increment
+                    // Base is still V3 Base (reward for reaching V3)
+
+                    // Count specific credential types
+                    // Note: activeCredCount is total (2.5 + 3.0)
+                    // activeV3CredCount is 3.0 only
+                    // So 2.5 count = activeCredCount - activeV3CredCount
+
+                    const v3Count = activeV3CredCount;
+                    const normalCount = Math.max(0, activeCredCount - v3Count);
+
+                    // Base Quota (V3 Level Base)
+                    modelQuota = baseQuotas[modelType];
+
+                    // Increment from Normal Creds (using Contributor rates)
+                    // We treat ALL normal creds as "extra" if we are in V3 mode,
+                    // OR we subtract 1 from total?
+                    // Let's follow the standard: "Base covers 1st cred".
+                    // Which cred is the "1st"? Usually the best one.
+                    // So Base covers 1x V3 cred.
+                    
+                    const extraV3 = Math.max(0, v3Count - 1);
+                    const extraNormal = normalCount; // All normal creds are extra since Base covers a V3
+
+                    // Get Contributor Increments for Normal Creds
+                    const contributorInc = quotaConfig['contributor'].increment;
+                    
+                    modelQuota += extraNormal * (contributorInc[modelType] || 0);
+                    modelQuota += extraV3 * (incQuotas[modelType] || 0);
+
+                } else {
+                    // Standard Logic (Level Override)
+                    const extraCreds = (level === 'newbie') ? 0 : Math.max(0, activeCredCount - 1);
+                    modelQuota = baseQuotas[modelType] + extraCreds * incQuotas[modelType];
+                }
+
+                // 5. Check Usage from Redis
+                const todayStr = getTodayStrUTC8();
+                const userStatsKey = `USER_STATS:${user.id}:${todayStr}`;
+                
+                let modelKey = 'unknown';
+                if (modelType === 'flash') modelKey = 'gemini-2.5-flash';
+                else if (modelType === 'pro') modelKey = 'gemini-2.5-pro';
+                else if (modelType === 'v3') modelKey = 'gemini-3-pro-preview';
+
+                if (modelKey !== 'unknown') {
+                    const currentUsage = parseInt(await redis.hget(userStatsKey, modelKey) || '0', 10);
+
+                    if (currentUsage >= modelQuota) {
+                        return reply.code(402).send({ error: `Daily quota for ${modelType} models exceeded (${currentUsage}/${modelQuota})` });
+                    }
+                }
             }
 
             const rateKey = `RATE_LIMIT:${user.id}`;
@@ -976,13 +1080,13 @@ export class ProxyController {
         let key = 'other';
         let globalKey = 'other';
 
-        if (modelName.includes('gemini-2.5-flash')) {
+        if (modelName.includes('flash')) {
             key = 'gemini-2.5-flash';
             globalKey = 'flash';
-        } else if (modelName.includes('gemini-2.5-pro')) {
+        } else if (modelName.includes('2.5-pro')) {
             key = 'gemini-2.5-pro';
             globalKey = 'pro';
-        } else if (modelName.includes('gemini-3-pro-preview') || modelName.includes('gemini-3')) {
+        } else if (modelName.includes('3-pro')) {
             key = 'gemini-3-pro-preview';
             globalKey = 'v3';
         }
@@ -1158,9 +1262,6 @@ export class ProxyController {
         }
 
         // 立即计数（不等待 API 响应）
-        if (!isAdminKey) {
-            await prisma.user.update({ where: { id: user.id }, data: { today_used: { increment: 1 } } }).catch(() => { });
-        }
         await ProxyController.recordSuccessfulCall(cred.credentialId, modelName, user.id);
 
         try {
@@ -1198,9 +1299,6 @@ export class ProxyController {
         const responseId = 'chatcmpl-' + crypto.randomUUID();
 
         // 立即计数（不等待首个 chunk）
-        if (!isAdminKey) {
-            await prisma.user.update({ where: { id: user.id }, data: { today_used: { increment: 1 } } }).catch(() => { });
-        }
         await ProxyController.recordSuccessfulCall(cred.credentialId, modelName, user.id);
 
         try {
@@ -1271,9 +1369,6 @@ export class ProxyController {
 
             clearInterval(heartbeatInterval);
 
-            if (!isAdminKey) {
-                await prisma.user.update({ where: { id: user.id }, data: { today_used: { increment: 1 } } }).catch(() => { });
-            }
             await ProxyController.recordSuccessfulCall(cred.credentialId, modelName, user.id);
 
             // Extract content (Fix: Handle .response wrapper and Safety)

@@ -13,8 +13,8 @@
 
     <!-- Content inside -->
     <div class="absolute bottom-0 text-center transform translate-y-4">
-      <div class="text-4xl font-black" :class="textColor">{{ current }}</div>
-      <div class="text-xs font-bold uppercase tracking-widest opacity-60">/ {{ max }}</div>
+      <div class="text-4xl font-black" :class="textColor">{{ displayCurrent }}</div>
+      <div class="text-xs font-bold uppercase tracking-widest opacity-60">/ {{ displayMax }}</div>
     </div>
   </div>
 </template>
@@ -35,10 +35,15 @@ const ARC_LENGTH = 251.3;
 const dashArray = ARC_LENGTH;
 
 const dashOffset = computed(() => {
-  const percentage = Math.min(props.current / props.max, 1);
-  // Stroke-dashoffset: The amount to hide. 
+  const curr = isNaN(props.current) ? 0 : props.current;
+  const mx = (isNaN(props.max) || props.max === 0) ? 1 : props.max;
+  const percentage = Math.min(curr / mx, 1);
+  // Stroke-dashoffset: The amount to hide.
   // 0 = full show, ARC_LENGTH = full hide.
   // We want to show 'percentage', so we hide (1 - percentage).
   return ARC_LENGTH * (1 - percentage);
 });
+
+const displayCurrent = computed(() => isNaN(props.current) ? 0 : props.current);
+const displayMax = computed(() => isNaN(props.max) ? 0 : props.max);
 </script>

@@ -14,21 +14,21 @@
             <div class="model-bar">
               <div class="model-bar-fill flash" :style="{ width: getPercentage('gemini-2.5-flash') + '%' }"></div>
             </div>
-            <div class="model-value">{{ stats.model_usage?.['gemini-2.5-flash'] || 0 }}</div>
+            <div class="model-value">{{ getUsageText('gemini-2.5-flash') }}</div>
           </div>
           <div class="model-row">
             <div class="model-label">gemini-2.5-pro</div>
             <div class="model-bar">
               <div class="model-bar-fill pro" :style="{ width: getPercentage('gemini-2.5-pro') + '%' }"></div>
             </div>
-            <div class="model-value">{{ stats.model_usage?.['gemini-2.5-pro'] || 0 }}</div>
+            <div class="model-value">{{ getUsageText('gemini-2.5-pro') }}</div>
           </div>
           <div class="model-row">
             <div class="model-label">gemini-3-pro</div>
             <div class="model-bar">
               <div class="model-bar-fill preview" :style="{ width: getPercentage('gemini-3-pro-preview') + '%' }"></div>
             </div>
-            <div class="model-value">{{ stats.model_usage?.['gemini-3-pro-preview'] || 0 }}</div>
+            <div class="model-value">{{ getUsageText('gemini-3-pro-preview') }}</div>
           </div>
         </div>
       </div>
@@ -44,14 +44,58 @@ const props = defineProps<{
 }>();
 
 const percentage = computed(() => {
-    if (!props.stats.daily_limit) return 0;
-    return Math.min(100, Math.round((props.stats.today_used / props.stats.daily_limit) * 100));
+    const limit = props.stats.daily_limit;
+    if (!limit) return 0;
+
+    let totalLimit = 0;
+    let totalUsed = 0;
+
+    if (typeof limit === 'number') {
+        // Old format
+        totalLimit = limit;
+        totalUsed = props.stats.today_used || 0;
+    } else {
+        // New format (Object)
+        totalLimit = (limit.flash || 0) + (limit.pro || 0) + (limit.v3 || 0);
+        const usage = props.stats.model_usage || {};
+        totalUsed = (usage['gemini-2.5-flash'] || 0) + (usage['gemini-2.5-pro'] || 0) + (usage['gemini-3-pro-preview'] || 0);
+    }
+
+    if (totalLimit === 0) return 0;
+    return Math.min(100, Math.round((totalUsed / totalLimit) * 100));
 });
 
 const getPercentage = (model: string) => {
     const usage = props.stats.model_usage?.[model] || 0;
-    const total = props.stats.today_used || 1;
-    return Math.min(100, Math.round((usage / total) * 100));
+    const limit = props.stats.daily_limit;
+    
+    let modelLimit = 0;
+    if (typeof limit === 'number') {
+        modelLimit = limit;
+    } else if (limit) {
+        if (model === 'gemini-2.5-flash') modelLimit = limit.flash || 0;
+        else if (model === 'gemini-2.5-pro') modelLimit = limit.pro || 0;
+        else if (model === 'gemini-3-pro-preview') modelLimit = limit.v3 || 0;
+    }
+
+    if (modelLimit === 0) return 0;
+    return Math.min(100, Math.round((usage / modelLimit) * 100));
+};
+
+const getUsageText = (model: string) => {
+    const usage = props.stats.model_usage?.[model] || 0;
+    const limit = props.stats.daily_limit;
+    
+    let modelLimit = 0;
+    if (typeof limit === 'number') {
+        modelLimit = limit;
+    } else if (limit) {
+        if (model === 'gemini-2.5-flash') modelLimit = limit.flash || 0;
+        else if (model === 'gemini-2.5-pro') modelLimit = limit.pro || 0;
+        else if (model === 'gemini-3-pro-preview') modelLimit = limit.v3 || 0;
+    }
+    
+    return `${usage}/${modelLimit}`;
 };
 </script>
 
@@ -159,8 +203,9 @@ const getPercentage = (model: string) => {
     margin-left: 12px;
     font-size: 0.75rem;
     color: #FFFFFF;
-    width: 60px;
+    width: 80px; /* Increased width to fit "usage/limit" */
     text-align: right;
+    white-space: nowrap;
 }
 
 .flash { background: linear-gradient(90deg, #6366f1, #818cf8); box-shadow: 0 0 10px rgba(99, 102, 241, 0.4); }

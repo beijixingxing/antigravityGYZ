@@ -11,6 +11,8 @@ const users = ref<any[]>([]);
 const pagination = ref({ page: 1, limit: 10, total: 0, total_pages: 1 });
 const search = ref('');
 const loading = ref(false);
+const sortBy = ref('created_at');
+const sortOrder = ref('desc');
 
 // Modals
 const showQuotaModal = ref(false);
@@ -29,7 +31,9 @@ const fetchUsers = async () => {
       params: { 
         page: pagination.value.page, 
         limit: pagination.value.limit,
-        search: search.value 
+        search: search.value,
+        sortBy: sortBy.value,
+        sortOrder: sortOrder.value
       } 
     });
     users.value = res.data.data;
@@ -44,6 +48,17 @@ const fetchUsers = async () => {
 watch(() => pagination.value.page, fetchUsers);
 
 const handleSearch = () => {
+    pagination.value.page = 1;
+    fetchUsers();
+};
+
+const handleSort = (column: string) => {
+    if (sortBy.value === column) {
+        sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc';
+    } else {
+        sortBy.value = column;
+        sortOrder.value = 'asc';
+    }
     pagination.value.page = 1;
     fetchUsers();
 };
@@ -149,9 +164,24 @@ onMounted(fetchUsers);
       <table class="w-full text-left border-collapse">
         <thead>
           <tr class="text-[#A5B4FC] text-xs uppercase tracking-wider border-b border-white/10 bg-white/5">
-            <th class="p-4 font-bold">用户</th>
-            <th class="p-4 font-bold text-center">状态</th>
-            <th class="p-4 font-bold">用量统计</th>
+            <th class="p-4 font-bold select-none cursor-pointer hover:text-white transition-colors" @click="handleSort('email')">
+                <div class="flex items-center gap-1">
+                    <span>用户</span>
+                    <span v-if="sortBy === 'email'" class="text-xs">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
+                </div>
+            </th>
+            <th class="p-4 font-bold text-center select-none cursor-pointer hover:text-white transition-colors" @click="handleSort('is_active')">
+                <div class="flex items-center justify-center gap-1">
+                    <span>状态</span>
+                    <span v-if="sortBy === 'is_active'" class="text-xs">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
+                </div>
+            </th>
+            <th class="p-4 font-bold select-none cursor-pointer hover:text-white transition-colors" @click="handleSort('today_used')">
+                <div class="flex items-center gap-1">
+                    <span>用量统计</span>
+                    <span v-if="sortBy === 'today_used'" class="text-xs">{{ sortOrder === 'asc' ? '▲' : '▼' }}</span>
+                </div>
+            </th>
             <th class="p-4 font-bold text-center">Discord</th>
             <th class="p-4 font-bold text-right">操作</th>
           </tr>

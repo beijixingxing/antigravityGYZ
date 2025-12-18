@@ -16,7 +16,7 @@
     <div v-if="currentTab === 'home'" class="grid">
       <!-- Announcement Card -->
       <div class="card-wrapper">
-        <AnnouncementCard :content="announcementData.content" />
+        <AnnouncementCard :content="announcementData.content" @click="showAnnouncementModal = true" />
       </div>
 
       <!-- Usage Card -->
@@ -32,53 +32,73 @@
 
     <!-- Upload Tab -->
     <div v-else-if="currentTab === 'upload'" class="max-w-4xl mx-auto space-y-8">
-        <div class="bg-gradient-to-br from-indigo-100 to-purple-100 text-indigo-950 rounded-[40px] p-10 shadow-2xl border border-white/50">
-          <h2 class="text-3xl font-black mb-4 text-[#4338CA]">CLI 凭证上传</h2>
-          <p class="text-lg font-medium opacity-70 mb-6 text-[#4338CA]">
-            上传 Google Cloud Code CLI 凭证 JSON 文件，立即解锁更多额度。若包含 Gemini 3.0 权限，将自动识别并解锁至臻权限。
-          </p>
-
-          <div class="relative group">
-            <textarea 
-              v-model="uploadContent" 
-              rows="6" 
-              class="w-full bg-white/60 border-2 border-transparent rounded-3xl p-6 text-indigo-950 placeholder-indigo-950/30 focus:border-indigo-400 focus:bg-white focus:outline-none font-mono text-sm resize-none transition-all"
-              placeholder='在此粘贴 JSON 内容，或者点击下方上传文件...'
-            ></textarea>
-            
-            <div class="absolute bottom-4 right-4">
-               <label class="cursor-pointer bg-white text-indigo-600 px-4 py-2 rounded-full font-bold shadow-md hover:bg-indigo-50 transition flex items-center gap-2">
-                 <span>{{ filesToUpload.length > 0 ? `已选 ${filesToUpload.length} 个文件` : '📂 批量上传' }}</span>
-                 <input type="file" accept=".json" multiple class="hidden" @change="handleFileUpload">
-               </label>
+        <!-- Upload Card -->
+        <div class="bg-white/5 backdrop-blur-xl border border-purple-500/30 rounded-[40px] overflow-hidden shadow-[0_0_30px_rgba(139,92,246,0.15)] transition-all duration-500">
+            <div
+                class="p-8 flex items-center justify-between cursor-pointer hover:bg-white/5 transition-colors"
+                @click="isUploadExpanded = !isUploadExpanded"
+            >
+                <div class="flex items-center gap-4">
+                    <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-2xl shadow-lg shadow-indigo-500/30">
+                        ☁️
+                    </div>
+                    <div>
+                        <h2 class="text-2xl font-black text-white">CLI 凭证上传</h2>
+                        <p class="text-sm text-[#A5B4FC] opacity-80">上传 Google Cloud Code 凭证以解锁更多额度</p>
+                    </div>
+                </div>
+                <div class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-white/50 transition-transform duration-300" :class="{ 'rotate-180': isUploadExpanded }">
+                    ▼
+                </div>
             </div>
-          </div>
 
-          <div class="flex items-center justify-end mt-6 gap-4 flex-wrap">
-             <a 
-               href="https://oauth.beijixingxing.com/" 
-               target="_blank"
-               class="px-6 py-4 text-white bg-green-500 rounded-full font-bold text-lg hover:bg-green-600 transition-all shadow-lg shadow-green-500/30 flex items-center gap-2"
-             >
-               🔗 获取凭证 / Get Credential
-             </a>
+            <div v-show="isUploadExpanded" class="px-8 pb-8 border-t border-white/10 pt-8">
+                <p class="text-base text-[#E2E8F0] mb-6 leading-relaxed">
+                    上传 Google Cloud Code CLI 凭证 JSON 文件，立即解锁更多额度。若包含 Gemini 3.0 权限，将自动识别并解锁至臻权限。
+                </p>
 
-             <button 
-               @click="handleCheckRaw" 
-               :disabled="isUploading || !uploadContent"
-               class="px-6 py-4 text-indigo-600 bg-white border-2 border-indigo-100 rounded-full font-bold text-lg hover:bg-indigo-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-             >
-               {{ isCheckingRaw ? '检测中...' : '🔍 仅检测 3.0 资格' }}
-             </button>
+                <div class="relative group mb-6">
+                    <textarea
+                        v-model="uploadContent"
+                        rows="6"
+                        class="w-full bg-black/20 border border-white/10 rounded-3xl p-6 text-white placeholder-white/30 focus:border-[#8B5CF6] focus:bg-black/30 focus:outline-none font-mono text-sm resize-none transition-all"
+                        placeholder='在此粘贴 JSON 内容，或者点击下方上传文件...'
+                    ></textarea>
+                    
+                    <div class="absolute bottom-4 right-4">
+                        <label class="cursor-pointer bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-full font-bold backdrop-blur-md transition flex items-center gap-2 border border-white/10">
+                            <span>{{ filesToUpload.length > 0 ? `已选 ${filesToUpload.length} 个文件` : '📂 批量上传' }}</span>
+                            <input type="file" accept=".json" multiple class="hidden" @change="handleFileUpload">
+                        </label>
+                    </div>
+                </div>
 
-             <button
-               @click="handleUpload"
-               :disabled="isUploading"
-               class="px-10 py-4 bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white rounded-full font-black text-lg hover:opacity-90 hover:scale-105 hover:shadow-[0_0_20px_rgba(139,92,246,0.5)] transition-all duration-300 shadow-lg shadow-indigo-500/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:shadow-none"
-             >
-               {{ isUploading ? '验证中...' : '验证并提交 ✨' }}
-             </button>
-          </div>
+                <div class="flex items-center justify-end gap-4 flex-wrap">
+                    <a
+                        href="https://oauth.beijixingxing.com/"
+                        target="_blank"
+                        class="px-6 py-3 text-white bg-green-600/80 hover:bg-green-500 rounded-full font-bold text-sm transition-all shadow-lg shadow-green-500/20 flex items-center gap-2 border border-green-400/30"
+                    >
+                        🔗 获取凭证
+                    </a>
+
+                    <button
+                        @click="handleCheckRaw"
+                        :disabled="isUploading || !uploadContent"
+                        class="px-6 py-3 text-[#A5B4FC] bg-white/5 border border-white/10 rounded-full font-bold text-sm hover:bg-white/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {{ isCheckingRaw ? '检测中...' : '🔍 仅检测 3.0 资格' }}
+                    </button>
+
+                    <button
+                        @click="handleUpload"
+                        :disabled="isUploading"
+                        class="px-8 py-3 bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white rounded-full font-black text-sm hover:opacity-90 hover:scale-105 hover:shadow-[0_0_20px_rgba(139,92,246,0.5)] transition-all duration-300 shadow-lg shadow-indigo-500/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:shadow-none"
+                    >
+                        {{ isUploading ? '验证中...' : '验证并提交 ✨' }}
+                    </button>
+                </div>
+            </div>
         </div>
         
         <div class="bg-white/5 border border-white/10 rounded-[40px] p-8 text-white">
@@ -287,14 +307,18 @@
 
         <!-- Admin Settings & Tables -->
         <div class="bg-white/5 backdrop-blur-xl border border-purple-500/30 rounded-[40px] p-1 shadow-[0_0_30px_rgba(139,92,246,0.15)] overflow-hidden">
-            <div class="flex gap-2 p-2 border-b border-white/5">
-                <button @click="adminTab = 'credentials'" class="px-6 py-3 rounded-full text-sm font-bold transition-all" :class="adminTab === 'credentials' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">🎫 凭证管理</button>
-                <button @click="adminTab = 'users'" class="px-6 py-3 rounded-full text-sm font-bold transition-all" :class="adminTab === 'users' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">👥 用户管理</button>
-                <button @click="adminTab = 'settings'" class="px-6 py-3 rounded-full text-sm font-bold transition-all" :class="adminTab === 'settings' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">⚙️ 系统设置</button>
+            <div class="flex gap-2 p-2 border-b border-white/5 overflow-x-auto">
+                <button @click="adminTab = 'credentials'" class="px-6 py-3 rounded-full text-sm font-bold transition-all whitespace-nowrap" :class="adminTab === 'credentials' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">🎫 凭证管理</button>
+                <button @click="adminTab = 'users'" class="px-6 py-3 rounded-full text-sm font-bold transition-all whitespace-nowrap" :class="adminTab === 'users' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">👥 用户管理</button>
+                <button @click="adminTab = 'quotas'" class="px-6 py-3 rounded-full text-sm font-bold transition-all whitespace-nowrap" :class="adminTab === 'quotas' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">⚖️ 用户配额</button>
+                <button @click="adminTab = 'announcement'" class="px-6 py-3 rounded-full text-sm font-bold transition-all whitespace-nowrap" :class="adminTab === 'announcement' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">📢 公告管理</button>
+                <button @click="adminTab = 'settings'" class="px-6 py-3 rounded-full text-sm font-bold transition-all whitespace-nowrap" :class="adminTab === 'settings' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">⚙️ 系统设置</button>
             </div>
             <div class="p-4 text-white">
                 <AdminCredentialTable v-if="adminTab === 'credentials'" />
-                <AdminUserTable v-if="adminTab === 'users'" />
+                <AdminUserTable v-if="adminTab === 'users'" :config="{ antigravity: agConfig }" />
+                <AdminQuotaSettings v-if="adminTab === 'quotas'" />
+                <AdminAnnouncement v-if="adminTab === 'announcement'" />
                 <div v-if="adminTab === 'settings'">
                     <AdminSettings class="mb-6" />
                 </div>
@@ -339,6 +363,15 @@
         </div>
     </div>
 
+    <!-- Announcement Modal -->
+    <AnnouncementModal
+        :show="showAnnouncementModal"
+        :content="announcementData.content"
+        :forceRead="forceReadAnnouncement"
+        :duration="announcementData.duration"
+        @close="closeAnnouncement"
+    />
+
   </MainLayout>
 </template>
 
@@ -348,6 +381,7 @@ import { useRouter } from 'vue-router';
 import { api } from '@/utils/api';
 import MainLayout from '../layouts/MainLayout.vue';
 import AnnouncementCard from '../components/Dashboard/AnnouncementCard.vue';
+import AnnouncementModal from '../components/AnnouncementModal.vue';
 import UsageCard from '../components/Dashboard/UsageCard.vue';
 import AntiGravityCard from '../components/Dashboard/AntiGravityCard.vue';
 import AntigravityView from '../components/AntigravityView.vue';
@@ -355,6 +389,7 @@ import AdminCredentialTable from '../components/AdminCredentialTable.vue';
 import AdminUserTable from '../components/AdminUserTable.vue';
 import AdminQuotaSettings from '../components/AdminQuotaSettings.vue';
 import AdminSettings from '../components/AdminSettings.vue';
+import AdminAnnouncement from '../components/AdminAnnouncement.vue';
 import GaugeChart from '../components/GaugeChart.vue';
 
 const router = useRouter();
@@ -366,9 +401,11 @@ const expandOAuth = ref(false);
 const stats = ref<any>({});
 const userInfo = ref<any>({});
 const isAdmin = ref(false);
-const announcementData = ref({ content: '', version: 0 });
+const announcementData = ref({ content: '', version: 0, force_read: false, duration: 5 });
+const forceReadAnnouncement = ref(false);
 const apiKeys = ref<any[]>([]);
 const myCredentials = ref<any[]>([]);
+const agConfig = ref<any>({});
 const adminStats = ref({
   overview: {
     active_credentials: 0,
@@ -392,10 +429,12 @@ const isUploading = ref(false);
 const isCheckingRaw = ref(false);
 const filesToUpload = ref<File[]>([]);
 const visibleLimit = ref(5);
+const isUploadExpanded = ref(true);
 
 // Modals
 const showChangePwModal = ref(false);
 const showCreateModal = ref(false);
+const showAnnouncementModal = ref(false);
 const pwOld = ref('');
 const pwNew = ref('');
 const newKeyName = ref('');
@@ -444,7 +483,13 @@ const fetchStats = async () => {
         const resAdmin = await api.get('/admin/stats');
         adminStats.value = resAdmin.data;
         try {
-            const ag = await api.get('/antigravity/stats');
+            const [ag, agConf] = await Promise.all([
+                api.get('/antigravity/stats'),
+                api.get('/antigravity/config')
+            ]);
+            
+            agConfig.value = agConf.data;
+
             // Merge a minimal AG usage widget into adminStats.overview without impacting Cloud Code stats
             adminStats.value.overview = {
                 ...adminStats.value.overview,
@@ -462,8 +507,20 @@ const fetchStats = async () => {
     const resCreds = await api.get('/credentials');
     myCredentials.value = resCreds.data;
     
+    // Auto-collapse upload card if user has credentials
+    if (myCredentials.value.length > 0) {
+        isUploadExpanded.value = false;
+    }
+
     const resAnnounce = await api.get('/announcement');
     announcementData.value = resAnnounce.data;
+
+    // Check for forced announcement
+    const lastReadVersion = parseInt(localStorage.getItem('lastReadAnnouncementVersion') || '0', 10);
+    if (announcementData.value.version > lastReadVersion && announcementData.value.content) {
+        forceReadAnnouncement.value = true;
+        showAnnouncementModal.value = true;
+    }
 
   } catch(e: any) {
       if(e.response?.status === 401) router.push('/login');
@@ -670,6 +727,14 @@ const handleAntiGravityUpload = () => {
     setTimeout(() => {
         expandOAuth.value = false;
     }, 1000);
+};
+
+const closeAnnouncement = () => {
+    showAnnouncementModal.value = false;
+    if (forceReadAnnouncement.value) {
+        localStorage.setItem('lastReadAnnouncementVersion', String(announcementData.value.version));
+        forceReadAnnouncement.value = false;
+    }
 };
 
 onMounted(() => {

@@ -1,0 +1,55 @@
+services:
+  # Main Application
+  app:
+    build: .
+    container_name: gemini_app
+    restart: always
+    ports:
+      - "3001:3000"
+    env_file:
+      - .env
+    environment:
+      # Database Connection
+      # Format: postgresql://USER:PASSWORD@HOST:PORT/DB_NAME?schema=public
+      DATABASE_URL: "postgresql://postgres:917457@postgres:5432/clicloud?schema=public"
+      
+      # Redis Connection
+      # Format: redis://:PASSWORD@HOST:PORT
+      REDIS_URL: "redis://:917457@redis:6379"
+      
+    networks:
+      - 1panel-network
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: gemini_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "917457"
+      POSTGRES_DB: clicloud
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - 1panel-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: gemini_redis
+    restart: always
+    command: redis-server --requirepass "917457"
+    volumes:
+      - redis_data:/data
+    networks:
+      - 1panel-network
+
+networks:
+  1panel-network:
+    external: true
+
+volumes:
+  postgres_data:
+  redis_data:

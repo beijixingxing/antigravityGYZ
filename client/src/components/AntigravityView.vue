@@ -304,7 +304,9 @@
                   <th @click="handleSort('total_used')" class="px-4 md:px-6 py-3 md:py-4 text-[10px] md:text-xs font-black text-purple-300/70 uppercase tracking-wider cursor-pointer hover:text-purple-200 select-none">
                     次数 <span v-if="tokenSortBy === 'total_used'">{{ tokenOrder === 'asc' ? '↑' : '↓' }}</span>
                   </th>
-                  <th class="px-4 md:px-6 py-3 md:py-4 text-[10px] md:text-xs font-black text-purple-300/70 uppercase tracking-wider hidden md:table-cell">状态</th>
+                  <th @click="handleSort('status')" class="px-4 md:px-6 py-3 md:py-4 text-[10px] md:text-xs font-black text-purple-300/70 uppercase tracking-wider hidden md:table-cell cursor-pointer hover:text-purple-200 select-none">
+                    状态 <span v-if="tokenSortBy === 'status'">{{ tokenOrder === 'asc' ? '↑' : '↓' }}</span>
+                  </th>
                   <th class="px-4 md:px-6 py-3 md:py-4 text-[10px] md:text-xs font-black text-purple-300/70 uppercase tracking-wider text-right">操作</th>
                 </tr>
               </thead>

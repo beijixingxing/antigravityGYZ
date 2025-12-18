@@ -43,7 +43,14 @@ export default async function authRoutes(fastify: FastifyInstance) {
         try {
             const conf = JSON.parse(configSetting.value);
             enableReg = conf.enable_registration ?? true;
-            defaultQuota = conf.quota?.newbie ?? 300;
+            
+            // Handle new quota structure
+            if (conf.quota?.newbie?.base?.flash !== undefined) {
+                defaultQuota = conf.quota.newbie.base.flash;
+            } else {
+                // Fallback for old structure or default
+                defaultQuota = conf.quota?.newbie ?? 300;
+            }
         } catch (e) {}
     }
 

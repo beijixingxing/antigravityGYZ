@@ -390,6 +390,8 @@ export class AntigravityTokenManager {
         // Handle sorting
         if (sortBy === 'total_used') {
             orderBy.total_used = order;
+        } else if (sortBy === 'status') {
+            orderBy.status = order;
         } else {
             orderBy.id = order;
         }
