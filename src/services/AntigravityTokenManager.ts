@@ -2,8 +2,12 @@ import { PrismaClient, AntigravityTokenStatus, AntigravityToken } from '@prisma/
 import axios from 'axios';
 import { ANTIGRAVITY_CONFIG } from '../config/antigravityConfig';
 import { generateProjectId, generateSessionId, AntigravityTokenData } from '../utils/antigravityUtils';
+import { antigravityQuotaCache } from './AntigravityQuotaCache';
+import Redis from 'ioredis';
 
 const prisma = new PrismaClient();
+const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+const AG_LOCK_PREFIX = 'CRED_LOCK:AG:';
 
 /**
  * Antigravity Token Manager
@@ -140,7 +144,16 @@ export class AntigravityTokenManager {
 
             const status = error.response?.status;
             if (status === 403) {
-                await this.markAsDead(tokenId);
+                const graceSetting = await prisma.systemSetting.findUnique({ where: { key: 'AG_STARTUP_GRACE_MINUTES' } });
+                const graceMinutes = graceSetting ? parseInt(graceSetting.value || '10', 10) : 10;
+                const appStartedAt = (global as any).__appStartedAt as number | undefined;
+                const withinGrace = appStartedAt ? (Date.now() - appStartedAt) < (graceMinutes * 60 * 1000) : false;
+                if (withinGrace) {
+                    console.warn(`[AntigravityTokenManager] Within startup grace (${graceMinutes}m). Mark token #${tokenId} cooling instead of dead`);
+                    await this.markAsCooling(tokenId, graceMinutes * 60 * 1000);
+                } else {
+                    await this.markAsDead(tokenId);
+                }
             } else {
                 await prisma.antigravityToken.update({
                     where: { id: tokenId },
@@ -154,16 +167,13 @@ export class AntigravityTokenManager {
     /**
      * Get available Token (优化轮询：优先选择最久未使用的 Token)
      */
-    async getToken(): Promise<AntigravityTokenData | null> {
+    async getToken(opts?: { group?: 'claude' | 'gemini3', modelId?: string }, userId?: number, ttlMs: number = 30000): Promise<AntigravityTokenData | null> {
         const now = new Date();
         const minInterval = 2000; // 同一 Token 最少间隔 2 秒
 
         // 先检查并恢复冷却过期的凭证
         await this.checkCoolingTokens();
 
-        // 按 last_used_at 升序排序，优先使用最久未使用的 Token
-        // 注意：last_used_at 为 NULL 的（从未使用）应该排在最前面
-        // 只取前 50 个，提升大量凭证场景的性能
         const tokens = await prisma.antigravityToken.findMany({
             where: {
                 is_enabled: true,
@@ -173,10 +183,6 @@ export class AntigravityTokenManager {
                     { cooling_until: { lte: now } }
                 ]
             },
-            orderBy: [
-                // Prisma 默认 NULL 排在最前面（NULLS FIRST），这正是我们要的
-                { last_used_at: 'asc' }
-            ],
             take: 50 // 只取前 50 个，够用了
         });
 
@@ -184,69 +190,180 @@ export class AntigravityTokenManager {
             return null;
         }
 
-        // 尝试找一个符合间隔要求的 Token
-        for (const token of tokens) {
-            // 检查使用间隔
+        const withQuota = await Promise.all(tokens.map(async t => {
+            const cached = antigravityQuotaCache.get(t.id);
+            if (cached) return { t, q: cached };
+            const fromRedis = await antigravityQuotaCache.getFromRedis(t.id);
+            if (fromRedis) return { t, q: fromRedis };
+            return { t, q: null };
+        }));
+        const filteredByModel = withQuota.filter(x => {
+            if (!opts?.modelId) return true;
+            const pm = x.q?.per_model || [];
+            const m = pm.find(p => p.model_id === opts.modelId);
+            if (!m) return true; // if unknown, don't exclude
+            const hoursLeft = m.reset_time ? Math.max(0, (new Date(m.reset_time).getTime() - Date.now()) / 3600000) : null;
+            const windowHours = typeof m.window_seconds === 'number' ? (m.window_seconds / 3600) : null;
+            const effectiveHours = (hoursLeft ?? windowHours ?? 0);
+            const effRemaining = typeof m.remaining === 'number' ? m.remaining : (typeof x.q?.remaining === 'number' ? x.q.remaining : 0.0);
+            return effectiveHours > 0 || effRemaining > 0.01;
+        });
+        const normals = filteredByModel.filter(x => x.q?.classification === 'Normal' || x.q === null);
+        const pros = filteredByModel.filter(x => x.q?.classification === 'Pro');
+        const avgRemainingNormal = (() => {
+            const vals = normals.map(x => {
+                if (!x.q) return undefined;
+                const pm = x.q.per_model || [];
+                if (opts?.group === 'gemini3') {
+                    const arr = pm.map(p => p.model_id.includes('gemini-3') ? (typeof p.remaining === 'number' ? p.remaining : null) : null)
+                        .filter((v): v is number => typeof v === 'number');
+                    return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : (typeof x.q.remaining === 'number' ? x.q.remaining : undefined);
+                } else if (opts?.group === 'claude') {
+                    const arr = pm.map(p => p.model_id.includes('claude') ? (typeof p.remaining === 'number' ? p.remaining : null) : null)
+                        .filter((v): v is number => typeof v === 'number');
+                    return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : (typeof x.q.remaining === 'number' ? x.q.remaining : undefined);
+                }
+                return typeof x.q.remaining === 'number' ? x.q.remaining : undefined;
+            }).filter((v): v is number => typeof v === 'number');
+            if (vals.length === 0) return 1;
+            return vals.reduce((a, b) => a + b, 0) / vals.length;
+        })();
+        const candidates = avgRemainingNormal <= 0.10 ? withQuota : normals;
+        const sorted = candidates
+            .map(x => {
+                let remaining = 0.5;
+                if (x.q) {
+                    const pm = x.q.per_model || [];
+                    if (opts?.group === 'gemini3') {
+                        const arr = pm.map(p => p.model_id.includes('gemini-3') ? (typeof p.remaining === 'number' ? p.remaining : null) : null)
+                            .filter((v): v is number => typeof v === 'number');
+                        remaining = arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : (typeof x.q.remaining === 'number' ? x.q.remaining : 0.5);
+                    } else if (opts?.group === 'claude') {
+                        const arr = pm.map(p => p.model_id.includes('claude') ? (typeof p.remaining === 'number' ? p.remaining : null) : null)
+                            .filter((v): v is number => typeof v === 'number');
+                        remaining = arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : (typeof x.q.remaining === 'number' ? x.q.remaining : 0.5);
+                    } else {
+                        remaining = typeof x.q.remaining === 'number' ? x.q.remaining : 0.5;
+                    }
+                }
+                const last = x.t.last_used_at ? x.t.last_used_at.getTime() : 0;
+                return { ...x, weight: remaining, last };
+            })
+            .sort((a, b) => {
+                if (b.weight !== a.weight) return b.weight - a.weight;
+                return a.last - b.last;
+            });
+        for (const item of sorted) {
+            if (item.weight <= 0.01) continue;
+            const token = item.t;
+            // 跳过被其他用户持有锁的 Token
+            if (userId) {
+                const lockKey = `${AG_LOCK_PREFIX}${token.id}`;
+                const holder = await redis.get(lockKey);
+                if (holder && parseInt(holder, 10) !== userId) continue;
+            }
             if (token.last_used_at) {
                 const elapsed = now.getTime() - token.last_used_at.getTime();
-                if (elapsed < minInterval) {
-                    // 这个 Token 用得太频繁，跳过
-                    continue;
-                }
+                if (elapsed < minInterval) continue;
             }
-
-            // Check if expired
             if (this.isExpired(token)) {
                 const success = await this.refreshToken(token.id);
                 if (!success) continue;
-
-                // Get refreshed token
-                const refreshedToken = await prisma.antigravityToken.findUnique({ where: { id: token.id } });
-                if (!refreshedToken) continue;
-
-                // Update last used time
+                const refreshed = await prisma.antigravityToken.findUnique({ where: { id: token.id } });
+                if (!refreshed) continue;
                 await prisma.antigravityToken.update({
                     where: { id: token.id },
                     data: { last_used_at: new Date() }
                 }).catch(() => { });
-
-                return this.toTokenData(refreshedToken);
+                // 加锁
+                if (userId) {
+                    const ok = await this.acquireLock(token.id, userId, ttlMs);
+                    if (!ok) continue;
+                }
+                return this.toTokenData(refreshed);
             }
-
-            // Update last used time
             await prisma.antigravityToken.update({
                 where: { id: token.id },
                 data: { last_used_at: new Date() }
             }).catch(() => { });
-
+            // 加锁
+            if (userId) {
+                const ok = await this.acquireLock(token.id, userId, ttlMs);
+                if (!ok) continue;
+            }
             return this.toTokenData(token);
         }
-
-        // 如果所有 Token 都在间隔内，退而求其次：用最久未使用的那个
-        const fallbackToken = tokens[0];
-        if (fallbackToken) {
-            if (this.isExpired(fallbackToken)) {
-                const success = await this.refreshToken(fallbackToken.id);
-                if (success) {
-                    const refreshedToken = await prisma.antigravityToken.findUnique({ where: { id: fallbackToken.id } });
-                    if (refreshedToken) {
+        const fallback = tokens
+            .slice()
+            .sort((a, b) => {
+                const la = a.last_used_at ? a.last_used_at.getTime() : 0;
+                const lb = b.last_used_at ? b.last_used_at.getTime() : 0;
+                return la - lb;
+            })[0];
+        if (fallback) {
+            if (this.isExpired(fallback)) {
+                const ok = await this.refreshToken(fallback.id);
+                if (ok) {
+                    const r = await prisma.antigravityToken.findUnique({ where: { id: fallback.id } });
+                    if (r) {
                         await prisma.antigravityToken.update({
-                            where: { id: fallbackToken.id },
+                            where: { id: fallback.id },
                             data: { last_used_at: new Date() }
                         }).catch(() => { });
-                        return this.toTokenData(refreshedToken);
+                        // 加锁
+                        if (userId) {
+                            const ok2 = await this.acquireLock(fallback.id, userId, ttlMs);
+                            if (!ok2) return null;
+                        }
+                        return this.toTokenData(r);
                     }
                 }
             } else {
                 await prisma.antigravityToken.update({
-                    where: { id: fallbackToken.id },
+                    where: { id: fallback.id },
                     data: { last_used_at: new Date() }
                 }).catch(() => { });
-                return this.toTokenData(fallbackToken);
+                // 加锁
+                if (userId) {
+                    const ok3 = await this.acquireLock(fallback.id, userId, ttlMs);
+                    if (!ok3) return null;
+                }
+                return this.toTokenData(fallback);
             }
         }
-
         return null;
+    }
+
+    async acquireLock(tokenId: number, userId: number, ttlMs: number = 30000): Promise<boolean> {
+        const key = `${AG_LOCK_PREFIX}${tokenId}`;
+        const holder = await redis.get(key);
+        if (holder && parseInt(holder, 10) !== userId) return false;
+        const ok = await redis.set(key, String(userId), 'PX', ttlMs, 'NX');
+        if (ok === null && holder === String(userId)) {
+            await redis.pexpire(key, ttlMs);
+            return true;
+        }
+        return ok !== null;
+    }
+
+    async releaseLock(tokenId: number, userId: number): Promise<void> {
+        const key = `${AG_LOCK_PREFIX}${tokenId}`;
+        const holder = await redis.get(key);
+        if (holder && parseInt(holder, 10) === userId) {
+            await redis.del(key);
+        }
+    }
+
+    async refreshAllActiveTokens(): Promise<void> {
+        const tokens = await prisma.antigravityToken.findMany({
+            where: { is_enabled: true, status: { in: [AntigravityTokenStatus.ACTIVE, AntigravityTokenStatus.COOLING] } },
+            select: { id: true }
+        });
+        for (const t of tokens) {
+            try {
+                await this.refreshToken(t.id);
+            } catch {}
+        }
     }
 
     /**

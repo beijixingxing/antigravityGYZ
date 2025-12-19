@@ -9,6 +9,8 @@ import fs from 'fs';
 import { CredentialPoolManager } from './services/CredentialPoolManager';
 import { CronService } from './services/CronService';
 import { ProxyController } from './controllers/ProxyController';
+import { GoogleAIController } from './controllers/GoogleAIController';
+import { AntigravityTokenManager } from './services/AntigravityTokenManager';
 import adminRoutes from './routes/admin';
 import authRoutes from './routes/auth';
 import credentialRoutes from './routes/credential';
@@ -121,10 +123,25 @@ async function bootstrap() {
     app.post('/v1/chat/completions', ProxyController.handleChatCompletion);
     app.get('/v1/models', ProxyController.handleListModels); // Add this line
 
+    // Google AI Studio native format routes (CLI/Cloud Code channel)
+    app.get('/googleai/models', GoogleAIController.listModels);
+    app.post('/googleai/models/:model/generateContent', GoogleAIController.generateContent);
+    app.post('/googleai/models/:model/streamGenerateContent', GoogleAIController.streamGenerateContent);
+
     app.get('/health', async () => ({ status: 'ok', uptime: process.uptime() }));
 
     await app.listen({ port: PORT, host: '0.0.0.0' });
     console.log(`[System] Server listening on http://0.0.0.0:${PORT}`);
+    (global as any).__appStartedAt = Date.now();
+    setTimeout(async () => {
+      try {
+        const mgr = new AntigravityTokenManager();
+        await mgr.refreshAllActiveTokens();
+        console.log('[System] Startup warm-up: Antigravity tokens refreshed');
+      } catch (e) {
+        console.warn('[System] Startup warm-up failed:', (e as any)?.message || e);
+      }
+    }, 3000);
 
   } catch (err) {
     app.log.error(err);

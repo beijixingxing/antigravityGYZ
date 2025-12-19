@@ -6,6 +6,7 @@ import AdminQuotaSettings from './AdminQuotaSettings.vue';
 const isSharedMode = ref(true);
 const antigravityStrictMode = ref(false);
 const forceDiscordBind = ref(false);
+const gemini3OpenAccess = ref(false);
 const isLoading = ref(false);
 const message = ref('');
 
@@ -29,6 +30,7 @@ const fetchSettings = async () => {
     isSharedMode.value = res.data.enable_cli_shared_mode ?? res.data.enable_shared_mode;
     antigravityStrictMode.value = !!res.data.antigravity_strict_mode;
     forceDiscordBind.value = !!res.data.force_discord_bind;
+    gemini3OpenAccess.value = !!res.data.enable_gemini3_open_access;
   } catch (e) {
     console.error('Failed to fetch settings', e);
   }
@@ -94,6 +96,20 @@ const toggleForceDiscordBind = async () => {
     await api.post('/admin/settings', { force_discord_bind: newValue });
     forceDiscordBind.value = newValue;
     message.value = newValue ? '已开启强制 Discord 授权' : '已关闭强制 Discord 授权';
+  } catch (e) {
+    message.value = '设置更新失败';
+  } finally {
+    isLoading.value = false;
+  }
+};
+const toggleGemini3OpenAccess = async () => {
+  isLoading.value = true;
+  message.value = '';
+  try {
+    const newValue = !gemini3OpenAccess.value;
+    await api.post('/admin/settings', { enable_gemini3_open_access: newValue });
+    gemini3OpenAccess.value = newValue;
+    message.value = newValue ? '已开放 3.0 系列（CLI）给无凭证/无3.0权限用户' : '已关闭 3.0 系列开放访问（CLI）';
   } catch (e) {
     message.value = '设置更新失败';
   } finally {
@@ -310,13 +326,28 @@ const saveSettings = async () => {
     <div class="bg-white/5 backdrop-blur-xl border border-purple-500/30 rounded-2xl p-4 shadow-[0_0_15px_rgba(139,92,246,0.1)]">
         <div class="flex items-center gap-4 mb-4">
             <h2 class="text-lg font-bold text-[#C4B5FD] flex items-center gap-2 whitespace-nowrap">
-                <span>🔍 凭证检活</span>
+                <span>🔍 凭证检活 & 访问开关</span>
             </h2>
             <div class="h-4 w-[1px] bg-white/10"></div>
-            <p class="text-xs text-[#A5B4FC] opacity-60">验证所有凭证有效性，403 自动失效</p>
+            <p class="text-xs text-[#A5B4FC] opacity-60">验证所有凭证有效性；可开放 3.0 系列（CLI）给无凭证/无3.0权限用户</p>
         </div>
         
         <div class="flex flex-wrap gap-3">
+            <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10">
+                <span class="text-xs text-[#A5B4FC]">3.0 系列开放（CLI）</span>
+                <button
+                    @click="toggleGemini3OpenAccess"
+                    :disabled="isLoading"
+                    class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none shrink-0"
+                    :class="gemini3OpenAccess ? 'bg-gradient-to-r from-green-400 to-emerald-500' : 'bg-white/10'"
+                >
+                    <span class="sr-only">切换 3.0 系列开放</span>
+                    <span
+                    class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow"
+                    :class="gemini3OpenAccess ? 'translate-x-6' : 'translate-x-1'"
+                    />
+                </button>
+            </div>
             <button
                 @click="runCliHealthCheck"
                 :disabled="healthCheckLoading !== null"

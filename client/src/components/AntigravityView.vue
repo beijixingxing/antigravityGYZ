@@ -205,6 +205,40 @@
           <div class="h-px bg-gradient-to-r from-transparent via-purple-500/50 to-transparent flex-1"></div>
         </div>
 
+        <!-- Pools Overview -->
+        <div v-if="poolsOverview" class="grid grid-cols-2 gap-3 md:gap-4">
+          <div class="stat-card bg-gradient-to-br from-indigo-900/60 to-blue-900/60 border border-indigo-500/40 rounded-xl md:rounded-2xl p-4 md:p-5 text-center">
+            <div class="text-[10px] md:text-xs text-indigo-100/80 uppercase tracking-wider font-bold mb-2">Normal 凭证池</div>
+            <div class="flex items-center justify-center gap-4">
+              <div class="text-center">
+                <div class="text-2xl md:text-4xl font-black text-indigo-200">{{ poolsOverview.counts?.normal || 0 }}</div>
+                <div class="text-[10px] md:text-xs text-indigo-200/70">数量</div>
+              </div>
+              <div class="text-center">
+                <div class="text-2xl md:text-4xl font-black text-cyan-200">
+                  {{ poolsOverview.remaining?.normal_avg != null ? (poolsOverview.remaining.normal_avg * 100).toFixed(0) : '—' }}%
+                </div>
+                <div class="text-[10px] md:text-xs text-indigo-200/70">平均剩余</div>
+              </div>
+            </div>
+          </div>
+          <div class="stat-card bg-gradient-to-br from-purple-900/60 to-fuchsia-900/60 border border-purple-500/40 rounded-xl md:rounded-2xl p-4 md:p-5 text-center">
+            <div class="text-[10px] md:text-xs text-purple-100/80 uppercase tracking-wider font-bold mb-2">Pro 凭证池</div>
+            <div class="flex items-center justify-center gap-4">
+              <div class="text-center">
+                <div class="text-2xl md:text-4xl font-black text-purple-200">{{ poolsOverview.counts?.pro || 0 }}</div>
+                <div class="text-[10px] md:text-xs text-purple-200/70">数量</div>
+              </div>
+              <div class="text-center">
+                <div class="text-2xl md:text-4xl font-black text-pink-200">
+                  {{ poolsOverview.remaining?.pro_avg != null ? (poolsOverview.remaining.pro_avg * 100).toFixed(0) : '—' }}%
+                </div>
+                <div class="text-[10px] md:text-xs text-purple-200/70">平均剩余</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Stats -->
         <div class="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-4">
           <div class="stat-card bg-gradient-to-br from-emerald-900/50 to-teal-900/50 border border-emerald-500/30 rounded-xl md:rounded-2xl p-4 md:p-5 text-center">
@@ -283,12 +317,19 @@
                     <option value="">📋 全部</option>
                     <option value="DUPLICATE">🔁 重复邮箱</option>
                 </select>
+                <select v-model="poolFilter" @change="tokenPage=1; fetchTokens()"
+                    class="appearance-none bg-black/20 border border-white/10 pl-3 pr-8 py-1.5 text-purple-300 font-bold text-xs focus:outline-none focus:border-purple-500 cursor-pointer hover:bg-white/5 rounded-lg transition-all">
+                    <option value="">池: 全部</option>
+                    <option value="Normal">池: Normal</option>
+                    <option value="Pro">池: Pro</option>
+                </select>
                 <div class="text-xs text-purple-300/70">第 {{ tokenPage }} / {{ tokenPageCount }} 页</div>
                 <button @click="prevTokenPage" :disabled="tokenPage<=1" class="px-2 py-1 bg-purple-600/30 hover:bg-purple-600/50 disabled:opacity-50 rounded-lg text-white text-xs font-bold"><</button>
                 <button @click="nextTokenPage" :disabled="tokenPage>=tokenPageCount" class="px-2 py-1 bg-purple-600/30 hover:bg-purple-600/50 disabled:opacity-50 rounded-lg text-white text-xs font-bold">></button>
                 <button @click="fetchTokens" class="px-4 py-2 bg-purple-600/50 hover:bg-purple-600/70 rounded-xl text-white text-xs md:text-sm font-bold transition-all flex items-center justify-center gap-2">
                 <span :class="{ 'animate-spin': loadingTokens }">&#8635;</span> 刷新
                 </button>
+                <button @click="refreshQuotas" class="px-4 py-2 bg-indigo-600/50 hover:bg-indigo-600/70 rounded-xl text-white text-xs md:text-sm font-bold transition-all">刷新额度缓存</button>
             </div>
           </div>
 
@@ -350,6 +391,8 @@
                       <span v-if="token.status==='ACTIVE'" class="px-3 py-1 bg-emerald-500/20 text-emerald-300 rounded-full text-xs font-bold">活跃</span>
                       <span v-else-if="token.status==='COOLING'" class="px-3 py-1 bg-amber-500/20 text-amber-300 rounded-full text-xs font-bold">冷却中</span>
                       <span v-else class="px-3 py-1 bg-gray-500/20 text-gray-300 rounded-full text-xs font-bold">失效</span>
+                      <span v-if="token.classification" class="px-3 py-1 bg-indigo-500/20 text-indigo-300 rounded-full text-xs font-bold">{{ token.classification }}</span>
+                      <span v-if="typeof token.remaining==='number'" class="px-3 py-1 bg-cyan-500/20 text-cyan-300 rounded-full text-xs font-bold">{{ (token.remaining*100).toFixed(0) }}%</span>
                     </div>
                   </td>
                   <td class="px-4 md:px-6 py-3 md:py-4 text-right">
@@ -365,8 +408,57 @@
                         title="Delete">
                         &#128465;
                       </button>
+                      <button @click="openQuotaModal(token)"
+                        class="px-3 h-8 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/40 text-indigo-300 flex items-center justify-center transition-all text-xs font-bold"
+                        title="查看额度">
+                        额度
+                      </button>
+                      <button @click="forceRefreshQuota(token)"
+                        class="px-3 h-8 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/40 text-cyan-300 flex items-center justify-center transition-all text-xs font-bold"
+                        title="强制刷新额度">
+                        刷新额度
+                      </button>
                     </div>
                   </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div v-if="quotaModalVisible" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+        <div class="w-[90%] max-w-[720px] bg-white/5 backdrop-blur-xl border border-indigo-500/30 rounded-2xl p-4 md:p-6">
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2">
+              <span v-if="quotaData?.classification==='Pro'" class="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-bold">Pro</span>
+              <span v-else class="px-3 py-1 rounded-full bg-purple-500/20 text-purple-300 text-xs font-bold">Normal</span>
+              <span class="text-xs text-indigo-200/80">{{ quotaData?.window_label || '' }}</span>
+            </div>
+            <div class="text-[10px] md:text-xs text-indigo-200/70" v-if="quotaData?.meta">
+              {{ quotaData?.meta?.from_cache ? '缓存' : '实时' }} · {{ new Date(quotaData?.meta?.fetched_at).toLocaleString() }}
+            </div>
+            <button @click="closeQuotaModal" class="px-3 py-1 rounded-lg bg-white/10 text-white text-xs">关闭</button>
+          </div>
+          <div v-if="quotaLoading" class="text-center text-indigo-200 py-6">
+            <span class="animate-spin">&#9881;</span>
+          </div>
+          <div v-else-if="quotaError" class="text-center text-red-300 py-4">{{ quotaError }}</div>
+          <div v-else class="overflow-x-auto">
+            <table class="w-full">
+              <thead>
+                <tr class="text-left border-b border-indigo-500/20">
+                  <th class="px-3 py-2 text-[10px] md:text-xs text-indigo-200/80">模型ID</th>
+                  <th class="px-3 py-2 text-[10px] md:text-xs text-indigo-200/80">剩余(%)</th>
+                  <th class="px-3 py-2 text-[10px] md:text-xs text-indigo-200/80">重置时间</th>
+                  <th class="px-3 py-2 text-[10px] md:text-xs text-indigo-200/80">距重置(小时)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="m in quotaData?.models || []" :key="m.model_id" class="border-b border-white/5">
+                  <td class="px-3 py-2 text-white text-xs md:text-sm truncate">{{ m.model_id }}</td>
+                  <td class="px-3 py-2 text-indigo-100 text-xs md:text-sm">{{ ((m.remaining || 0) * 100).toFixed(1) }}</td>
+                  <td class="px-3 py-2 text-indigo-100 text-xs md:text-sm">{{ m.reset_time ? new Date(m.reset_time).toLocaleString() : '未知' }}</td>
+                  <td class="px-3 py-2 text-indigo-100 text-xs md:text-sm">{{ m.hours_to_reset ? m.hours_to_reset.toFixed(1) : '未知' }}</td>
                 </tr>
               </tbody>
             </table>
@@ -378,7 +470,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, watch, onUnmounted } from 'vue';
 import { api } from '@/utils/api';
 
 const props = defineProps<{ isAdmin?: boolean; initialExpandOAuth?: boolean }>();
@@ -428,10 +520,12 @@ const tokenPageCount = computed(() => Math.max(1, Math.ceil(tokenTotal.value / t
 const tokenSortBy = ref('id');
 const tokenOrder = ref<'asc' | 'desc'>('asc');
 const tokenStatus = ref('');
+const poolFilter = ref('');
 
 const stats = ref({ total: 0, active: 0, inactive: 0, total_capacity: 0, personal_max_usage: 0 });
 const agOverview = ref<any | null>(null);
 const agConfig = ref<any | null>(null);
+const poolsOverview = ref<any | null>(null);
 const loadingTokens = ref(false);
 const refreshing = ref(false);
 // agStrictMode 和 togglingStrict 已移至【管理设置】页面
@@ -623,7 +717,8 @@ const fetchTokens = async () => {
             limit: tokenLimit.value,
             sort_by: tokenSortBy.value,
             order: tokenOrder.value,
-            status: tokenStatus.value || undefined
+            status: tokenStatus.value || undefined,
+            pool: poolFilter.value || undefined
         }
     });
     tokens.value = res.data.tokens || [];
@@ -695,6 +790,57 @@ const deleteToken = async (token: any) => {
   }
 };
 
+const quotaModalVisible = ref(false);
+const quotaLoading = ref(false);
+const quotaError = ref('');
+const quotaData = ref<any | null>(null);
+const openQuotaModal = async (token: any) => {
+  quotaError.value = '';
+  quotaData.value = null;
+  quotaLoading.value = true;
+  try {
+    const res = await api.get(`/antigravity/tokens/${token.id}/quotas`);
+    quotaData.value = res.data;
+    token._quota_class = res.data.classification;
+    quotaModalVisible.value = true;
+  } catch (e: any) {
+    quotaError.value = e.response?.data?.error || e.message;
+    quotaModalVisible.value = true;
+  } finally {
+    quotaLoading.value = false;
+  }
+};
+const closeQuotaModal = () => { quotaModalVisible.value = false; };
+const refreshQuotas = async () => {
+  try {
+    await api.get('/antigravity/quotas/refresh');
+    fetchTokens();
+    fetchPoolsOverview();
+  } catch (e) {}
+};
+const forceRefreshQuota = async (token: any) => {
+  quotaError.value = '';
+  quotaData.value = null;
+  quotaLoading.value = true;
+  try {
+    const res = await api.get(`/antigravity/tokens/${token.id}/quotas`, { params: { force: true } });
+    quotaData.value = res.data;
+    token._quota_class = res.data.classification;
+    quotaModalVisible.value = true;
+  } catch (e: any) {
+    quotaError.value = e.response?.data?.error || e.message;
+    quotaModalVisible.value = true;
+  } finally {
+    quotaLoading.value = false;
+  }
+};
+const fetchPoolsOverview = async () => {
+  if (!isAdmin.value) return;
+  try {
+    const res = await api.get('/antigravity/pools/overview');
+    poolsOverview.value = res.data;
+  } catch (e) {}
+};
 const refreshAllTokens = async () => {
   refreshing.value = true;
   try {
@@ -732,6 +878,16 @@ onMounted(() => {
     fetchTokens();
     fetchAgOverview();
     fetchAgConfig();
+    fetchPoolsOverview();
+    const interval = setInterval(fetchPoolsOverview, 60000);
+    (window as any).__agPoolsInterval = interval;
+  }
+});
+onUnmounted(() => {
+  const interval = (window as any).__agPoolsInterval;
+  if (interval) {
+    clearInterval(interval);
+    (window as any).__agPoolsInterval = null;
   }
 });
 </script>

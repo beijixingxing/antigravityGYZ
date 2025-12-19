@@ -113,6 +113,32 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
         return config;
     });
 
+    // 原始额度响应调试 (仅管理员)
+    app.get('/tokens/:id/quotas/raw', async (req, reply) => {
+        if (!await verifyAdmin(req, reply)) return;
+        const { id } = req.params as { id: string };
+        const tokenId = parseInt(id);
+        const token = await prisma.antigravityToken.findUnique({ where: { id: tokenId } });
+        if (!token) {
+            return reply.code(404).send({ error: 'Not found' });
+        }
+        const tokenData = {
+            id: token.id,
+            access_token: token.access_token,
+            refresh_token: token.refresh_token,
+            expires_in: token.expires_in,
+            timestamp: token.timestamp,
+            project_id: token.project_id,
+            session_id: generateSessionId()
+        };
+        try {
+            const raw = await AntigravityService.getModelsWithQuotas(tokenData as any);
+            return reply.send({ raw });
+        } catch (e: any) {
+            return reply.code(500).send({ error: e.message || 'Failed to fetch raw quotas' });
+        }
+    });
+
     // 更新反重力配置
     app.post('/config', async (req, reply) => {
         if (!await verifyAdmin(req, reply)) return;
@@ -316,6 +342,7 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
         const sortBy = query.sort_by || 'id';
         const order = query.order === 'desc' ? 'desc' : 'asc';
         const status = query.status as string | undefined;
+        const pool = query.pool as string | undefined;
 
         const { tokens, total } = await antigravityTokenManager.getTokenList(page, limit, sortBy, order, status);
 
@@ -330,14 +357,27 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
         const totalCapacity = personalMax > 0 ? personalMax * baseStats.active : 0;
         const stats = { ...baseStats, inactive, personal_max_usage: personalMax, total_capacity: totalCapacity };
 
+        // enrich tokens with quota cache classification and remaining
+        const enriched = await Promise.all(tokens.map(async (t: any) => {
+            const cached = (await import('../services/AntigravityQuotaCache')).antigravityQuotaCache.get(t.id);
+            return {
+                ...t,
+                classification: cached?.classification || null,
+                remaining: typeof cached?.remaining === 'number' ? cached?.remaining : null,
+                window_hours: typeof cached?.window_hours === 'number' ? cached?.window_hours : null
+            };
+        }));
+        const filtered = pool === 'Pro' ? enriched.filter((x: any) => x.classification === 'Pro')
+            : pool === 'Normal' ? enriched.filter((x: any) => x.classification !== 'Pro') : enriched;
+
         return {
-            tokens,
+            tokens: filtered,
             stats,
             meta: {
-                total,
+                total: pool ? filtered.length : total,
                 page,
                 limit,
-                total_pages: Math.ceil(total / limit)
+                total_pages: Math.ceil((pool ? filtered.length : total) / limit)
             }
         };
     });
@@ -454,6 +494,183 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
             return { success: true };
         } catch (e: any) {
             return reply.code(500).send({ error: e.message });
+        }
+    });
+
+    // 刷新所有凭证额度缓存 (仅管理员)
+    app.get('/quotas/refresh', async (req, reply) => {
+        if (!await verifyAdmin(req, reply)) return;
+        const tokens = await prisma.antigravityToken.findMany({
+            where: { is_enabled: true, status: 'ACTIVE' },
+            select: { id: true, access_token: true, refresh_token: true, expires_in: true, timestamp: true, project_id: true }
+        });
+        const { antigravityQuotaCache } = require('../services/AntigravityQuotaCache');
+        const results: any[] = [];
+        let refreshed = 0;
+        for (const t of tokens) {
+            const tokenData = {
+                id: t.id,
+                access_token: t.access_token,
+                refresh_token: t.refresh_token,
+                expires_in: t.expires_in,
+                timestamp: t.timestamp,
+                project_id: t.project_id,
+                session_id: generateSessionId()
+            };
+            try {
+                await antigravityQuotaCache.refreshToken(tokenData);
+                refreshed++;
+                results.push({ id: t.id, status: 'ok' });
+            } catch (e: any) {
+                const status = e.statusCode || e.response?.status;
+                const msg = e.message || '';
+                results.push({ id: t.id, status: 'error', code: status || 'unknown', message: msg });
+            }
+        }
+        return { success: true, refreshed, total: tokens.length, results };
+    });
+
+    // 凭证池总览 (仅管理员)
+    app.get('/pools/overview', async (req, reply) => {
+        if (!await verifyAdmin(req, reply)) return;
+        const tokens = await prisma.antigravityToken.findMany({
+            where: { is_enabled: true, status: { in: ['ACTIVE', 'COOLING'] } },
+            select: { id: true, status: true }
+        });
+        const { antigravityQuotaCache } = require('../services/AntigravityQuotaCache');
+        let normal = 0, pro = 0;
+        const normalVals: number[] = [];
+        const proVals: number[] = [];
+        for (const t of tokens) {
+            const c = antigravityQuotaCache.get(t.id);
+            if (c?.classification === 'Pro') {
+                pro++;
+                if (typeof c.remaining === 'number') proVals.push(c.remaining);
+            } else {
+                normal++;
+                if (typeof c?.remaining === 'number') normalVals.push(c.remaining);
+            }
+        }
+        const avg = (arr: number[]) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+        return {
+            counts: { normal, pro, active: tokens.filter(t => t.status === 'ACTIVE').length, cooling: tokens.filter(t => t.status === 'COOLING').length },
+            remaining: { normal_avg: avg(normalVals), pro_avg: avg(proVals) },
+            last_quota_refresh_at: new Date().toISOString()
+        };
+    });
+
+    // 查询指定 Token 的模型额度与刷新窗口分类 (仅管理员)
+    const lastQuotaPull: Map<number, number> = new Map();
+    app.get('/tokens/:id/quotas', async (req, reply) => {
+        if (!await verifyAdmin(req, reply)) return;
+        const { id } = req.params as { id: string };
+        const { force } = req.query as any;
+        const tokenId = parseInt(id);
+        const token = await prisma.antigravityToken.findUnique({ where: { id: tokenId } });
+        if (!token) {
+            return reply.code(404).send({ error: 'Not found' });
+        }
+        const tokenData = {
+            id: token.id,
+            access_token: token.access_token,
+            refresh_token: token.refresh_token,
+            expires_in: token.expires_in,
+            timestamp: token.timestamp,
+            project_id: token.project_id,
+            session_id: generateSessionId()
+        };
+        try {
+            // ensure token is fresh before fetching quotas
+            try {
+                await antigravityTokenManager.refreshToken(tokenId);
+            } catch {}
+            const freshToken = await prisma.antigravityToken.findUnique({ where: { id: tokenId } }) || token;
+            const tokenDataFresh = {
+                id: freshToken.id,
+                access_token: freshToken.access_token,
+                refresh_token: freshToken.refresh_token,
+                expires_in: freshToken.expires_in,
+                timestamp: freshToken.timestamp,
+                project_id: freshToken.project_id,
+                session_id: generateSessionId()
+            };
+            const cached = (await import('../services/AntigravityQuotaCache')).antigravityQuotaCache.get(tokenId);
+            const nowTs = Date.now();
+            const minIntervalMs = 30000;
+            const lastTs = lastQuotaPull.get(tokenId) || 0;
+            let quotas: Record<string, any> | null = null;
+            let from_cache = false;
+            // use cache unless force or cache missing
+            if (cached && !force) {
+                quotas = Object.fromEntries(cached.per_model.map(pm => [pm.model_id, {
+                    remaining: pm.remaining,
+                    resetTime: pm.reset_time,
+                    windowSeconds: null
+                }]));
+                from_cache = true;
+            }
+            if (!quotas) {
+                // throttle frequent pulls
+                if (!force && nowTs - lastTs < minIntervalMs && cached) {
+                    quotas = Object.fromEntries(cached.per_model.map(pm => [pm.model_id, {
+                        remaining: pm.remaining,
+                        resetTime: pm.reset_time,
+                        windowSeconds: null
+                    }]));
+                    from_cache = true;
+                } else {
+                    quotas = await AntigravityService.getModelsWithQuotas(tokenDataFresh as any);
+                    lastQuotaPull.set(tokenId, nowTs);
+                    // refresh cache snapshot
+                    const { antigravityQuotaCache } = await import('../services/AntigravityQuotaCache');
+                    await antigravityQuotaCache.refreshToken(tokenDataFresh as any);
+                }
+            }
+            const now = Date.now();
+            const items = Object.entries(quotas).map(([model_id, q]: [string, any]) => {
+                const reset = q.resetTime ? new Date(q.resetTime).getTime() : null;
+                let hours: number | null = reset ? Math.max(0, (reset - now) / 3600000) : null;
+                if (hours == null && typeof q.windowSeconds === 'number') {
+                    hours = q.windowSeconds / 3600;
+                }
+                return {
+                    model_id,
+                    remaining: typeof q.remaining === 'number' ? q.remaining : q.remainingFraction ?? null,
+                    reset_time: q.resetTime || null,
+                    hours_to_reset: hours
+                };
+            });
+            const hoursList = items.map(i => i.hours_to_reset).filter((v): v is number => typeof v === 'number');
+            let medianHours = 0;
+            if (hoursList.length > 0) {
+                const sorted = [...hoursList].sort((a, b) => a - b);
+                const mid = Math.floor(sorted.length / 2);
+                medianHours = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+            }
+            const target5 = 5;
+            const target168 = 168;
+            const diff5 = Math.abs(medianHours - target5);
+            const diff168 = Math.abs(medianHours - target168);
+            const classification = hoursList.length > 0 ? (diff5 <= diff168 ? 'Pro' : 'Normal') : null;
+            const window_hours = hoursList.length > 0 ? medianHours : null;
+            const window_label = window_hours
+                ? (Math.abs(window_hours - 5) <= Math.abs(window_hours - 168) ? '~5h' : '~7d')
+                : null;
+            return {
+                token_id: tokenId,
+                classification,
+                window_hours,
+                window_label,
+                models: items,
+                meta: { count_with_quota: items.length, fetched_at: new Date().toISOString(), from_cache }
+            };
+        } catch (e: any) {
+            const status = e.statusCode || e.response?.status;
+            const message = e.message || e.response?.data?.error?.message || 'Unknown error';
+            if (status === 403) {
+                return reply.code(403).send({ error: '该凭证无权限查看额度', detail: message });
+            }
+            return reply.code(typeof status === 'number' ? status : 500).send({ error: message });
         }
     });
 

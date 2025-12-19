@@ -7,6 +7,11 @@ import {
     generateToolCallId
 } from '../utils/antigravityUtils';
 import { makeHttpError } from '../utils/http';
+import { PrismaClient } from '@prisma/client';
+import Redis from 'ioredis';
+
+const prisma = new PrismaClient();
+const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 
 interface StreamState {
     toolCalls: any[];
@@ -26,7 +31,9 @@ export class AntigravityService {
             'User-Agent': ANTIGRAVITY_CONFIG.api.userAgent,
             'Authorization': `Bearer ${token.access_token}`,
             'Content-Type': 'application/json',
-            'Accept-Encoding': 'gzip'
+            'Accept': 'application/json',
+            'Accept-Encoding': 'gzip',
+            'X-Goog-Api-Client': 'gl-node/20.0.0 antigravityGYZ'
         };
     }
 
@@ -258,12 +265,41 @@ export class AntigravityService {
         const headers = this.buildHeaders(token);
 
         try {
+            const payload: any = ANTIGRAVITY_CONFIG.skipProjectIdFetch
+                ? {}
+                : {
+                    project: token.project_id || null,
+                    metadata: { ideType: 'ANTIGRAVITY' }
+                };
+            if (!ANTIGRAVITY_CONFIG.skipProjectIdFetch && !payload.project) {
+                try {
+                    const resp = await antigravityRequester.fetch(
+                        'https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist',
+                        {
+                            method: 'POST',
+                            headers,
+                            body: JSON.stringify({ metadata: { ideType: 'ANTIGRAVITY', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' } }),
+                            timeout_ms: 15000
+                        }
+                    );
+                    if (resp.ok) {
+                        const info = await resp.json();
+                        payload.project = info?.cloudaicompanionProject || null;
+                        if (payload.project && token.id) {
+                            await prisma.antigravityToken.update({
+                                where: { id: token.id },
+                                data: { project_id: String(payload.project) }
+                            }).catch(() => { });
+                        }
+                    }
+                } catch {}
+            }
             const response = await antigravityRequester.fetch(
                 ANTIGRAVITY_CONFIG.api.modelsUrl,
                 {
                     method: 'POST',
                     headers,
-                    body: '{}',
+                    body: JSON.stringify(payload),
                     timeout_ms: 30000
                 }
             );
@@ -287,18 +323,69 @@ export class AntigravityService {
         const headers = this.buildHeaders(token);
 
         try {
-            const response = await antigravityRequester.fetch(
-                ANTIGRAVITY_CONFIG.api.modelsUrl,
-                {
-                    method: 'POST',
-                    headers,
-                    body: '{}',
-                    timeout_ms: 30000
-                }
-            );
-
-            if (!response.ok) {
-                throw new Error(`Failed to fetch quotas: ${response.status}`);
+            const attemptEmpty = async () => {
+                return await antigravityRequester.fetch(
+                    ANTIGRAVITY_CONFIG.api.modelsUrl,
+                    {
+                        method: 'POST',
+                        headers,
+                        body: '{}',
+                        timeout_ms: 30000
+                    }
+                );
+            };
+            const payloadBase: any = ANTIGRAVITY_CONFIG.skipProjectIdFetch
+                ? {}
+                : {
+                    project: token.project_id || null,
+                    metadata: { ideType: 'ANTIGRAVITY' }
+                };
+            // Fallback: resolve project_id if missing
+            if (!ANTIGRAVITY_CONFIG.skipProjectIdFetch && !payloadBase.project) {
+                try {
+                    const resp = await antigravityRequester.fetch(
+                        'https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:loadCodeAssist',
+                        {
+                            method: 'POST',
+                            headers,
+                            body: JSON.stringify({ metadata: { ideType: 'ANTIGRAVITY', platform: 'PLATFORM_UNSPECIFIED', pluginType: 'GEMINI' } }),
+                            timeout_ms: 15000
+                        }
+                    );
+                    if (resp.ok) {
+                        const info = await resp.json();
+                        payloadBase.project = info?.cloudaicompanionProject || null;
+                        if (payloadBase.project && token.id) {
+                            await prisma.antigravityToken.update({
+                                where: { id: token.id },
+                                data: { project_id: String(payloadBase.project) }
+                            }).catch(() => { });
+                        }
+                    }
+                } catch {}
+            }
+            const doOnce = async () => {
+                return await antigravityRequester.fetch(
+                    ANTIGRAVITY_CONFIG.api.modelsUrl,
+                    {
+                        method: 'POST',
+                        headers,
+                        body: JSON.stringify(payloadBase),
+                        timeout_ms: 30000
+                    }
+                );
+            };
+            let response = await attemptEmpty();
+            let attempt = 0;
+            while ((response.status === 429 || response.status === 503 || response.status === 502 || response.status === 500) && attempt < 3) {
+                const backoff = [500, 1500, 3000][attempt];
+                await new Promise(r => setTimeout(r, backoff));
+                response = await attemptEmpty();
+                attempt++;
+            }
+            if (response.status >= 400 || !response.ok) {
+                const errText = await response.text();
+                throw makeHttpError(response.status, errText);
             }
 
             const data = await response.json();
@@ -306,12 +393,99 @@ export class AntigravityService {
 
             Object.entries(data.models || {}).forEach(([modelId, modelData]: [string, any]) => {
                 if (modelData.quotaInfo) {
+                    const qi = modelData.quotaInfo;
                     quotas[modelId] = {
-                        remaining: modelData.quotaInfo.remainingFraction,
-                        resetTime: modelData.quotaInfo.resetTime
+                        remaining: qi.remainingFraction,
+                        resetTime: qi.resetTime || qi.resetTimeStamp || qi.quotaResetTimeStamp,
+                        windowSeconds: qi.windowDurationSeconds ?? qi.quotaWindowSeconds ?? qi.windowSeconds
                     };
                 }
             });
+            // Ensure we always list models even if quotaInfo missing
+            Object.keys(data.models || {}).forEach((modelId: string) => {
+                if (!quotas[modelId]) {
+                    quotas[modelId] = { remaining: null, resetTime: null, windowSeconds: null };
+                }
+            });
+
+            if (Object.keys(quotas).length === 0) {
+                // Retry with project payload if empty payload did not provide quotaInfo
+                let resp2 = await doOnce();
+                let att2 = 0;
+                while ((resp2.status === 429 || resp2.status === 503 || resp2.status === 502 || resp2.status === 500) && att2 < 3) {
+                    const backoff = [500, 1500, 3000][att2];
+                    await new Promise(r => setTimeout(r, backoff));
+                    resp2 = await doOnce();
+                    att2++;
+                }
+                if (resp2.status < 400 && resp2.ok) {
+                    const data2 = await resp2.json();
+                    Object.entries(data2.models || {}).forEach(([modelId, modelData]: [string, any]) => {
+                        if (modelData.quotaInfo) {
+                            const qi = modelData.quotaInfo;
+                            quotas[modelId] = {
+                                remaining: qi.remainingFraction,
+                                resetTime: qi.resetTime || qi.resetTimeStamp || qi.quotaResetTimeStamp,
+                                windowSeconds: qi.windowDurationSeconds ?? qi.quotaWindowSeconds ?? qi.windowSeconds
+                            };
+                        }
+                    });
+                }
+            }
+
+            const noWindowInfo = Object.keys(quotas).length === 0 ||
+                Object.values(quotas).every((q: any) => !q.resetTime && !q.windowSeconds);
+            if (noWindowInfo) {
+                try {
+                    const setting = await prisma.systemSetting.findUnique({ where: { key: 'ENABLE_QUOTA_PROBE' } });
+                    const enabled = setting ? setting.value === 'true' : false;
+                    if (enabled) {
+                        const key = `AG_QPROBE_DAILY:${String(token.id)}`;
+                        const n = await redis.incr(key);
+                        if (n === 1) { await redis.expire(key, 86400); }
+                        if (n === 1) {
+                            const probeBody = generateAntigravityRequestBody(
+                                [{ role: 'user', parts: [{ text: 'hello' }] }],
+                                'gemini-2.5-flash',
+                                {},
+                                undefined,
+                                token
+                            );
+                            const probeResp = await antigravityRequester.fetch(
+                                ANTIGRAVITY_CONFIG.api.noStreamUrl,
+                                {
+                                    method: 'POST',
+                                    headers,
+                                    body: JSON.stringify(probeBody),
+                                    timeout_ms: 20000
+                                }
+                            );
+                            if (probeResp.status >= 400) {
+                                const errText = await probeResp.text();
+                                try {
+                                    const errObj = JSON.parse(errText);
+                                    const details = errObj?.error?.details || [];
+                                    for (const d of details) {
+                                        if (d['@type'] && String(d['@type']).includes('google.rpc.ErrorInfo')) {
+                                            const ts = d?.metadata?.quotaResetTimeStamp;
+                                            if (ts) {
+                                                const resetMs = new Date(ts).getTime();
+                                                const winSec = Math.max(0, Math.floor((resetMs - Date.now()) / 1000));
+                                                quotas['gemini-2.5-flash'] = {
+                                                    remaining: null,
+                                                    resetTime: ts,
+                                                    windowSeconds: winSec
+                                                };
+                                                break;
+                                            }
+                                        }
+                                    }
+                                } catch { }
+                            }
+                        }
+                    }
+                } catch { }
+            }
 
             return quotas;
         } catch (e) {

@@ -3,6 +3,7 @@ import { PrismaClient, CredentialStatus } from '@prisma/client';
 import Redis from 'ioredis';
 import axios from 'axios';
 import { AntigravityService } from './AntigravityService';
+import { antigravityQuotaCache } from './AntigravityQuotaCache';
 
 const prisma = new PrismaClient();
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
@@ -38,6 +39,18 @@ export class CronService {
             await this.checkCredentialHealth();
             console.log(`[CronService] Starting AntigravityToken health check at ${new Date().toISOString()}...`);
             await this.checkAntigravityTokenHealth();
+        }, {
+            scheduled: true,
+            timezone: "Asia/Shanghai"
+        });
+
+        // 4. Antigravity Quotas Partial Refresh
+        // Every 10 minutes refresh ~1/6 of tokens to avoid 429
+        cron.schedule('*/10 * * * *', async () => {
+            const minute = new Date().getMinutes();
+            const batchIndex = Math.floor(minute / 10); // 0..5
+            console.log(`[CronService] Refreshing Antigravity quotas batch ${batchIndex} at ${new Date().toISOString()}...`);
+            await this.refreshAntigravityQuotasPartial(batchIndex, 6);
         }, {
             scheduled: true,
             timezone: "Asia/Shanghai"
@@ -377,6 +390,47 @@ export class CronService {
             }
         } catch (error) {
             console.error('[CronService] Failed to run Antigravity token health check:', error);
+        }
+    }
+
+    /**
+     * Partial refresh of Antigravity quotas cache to reduce rate limits.
+     * Select tokens by id % batchDiv === batchMod.
+     */
+    async refreshAntigravityQuotasPartial(batchMod: number, batchDiv: number) {
+        try {
+            const tokens = await prisma.antigravityToken.findMany({
+                where: { is_enabled: true, status: 'ACTIVE' },
+                select: { id: true, access_token: true, refresh_token: true, expires_in: true, timestamp: true, project_id: true }
+            });
+            const selected = tokens.filter(t => (t.id % batchDiv) === batchMod);
+            let ok = 0, skipped = 0;
+            for (const t of selected) {
+                const tokenData = {
+                    id: t.id,
+                    access_token: t.access_token,
+                    refresh_token: t.refresh_token,
+                    expires_in: t.expires_in,
+                    timestamp: t.timestamp,
+                    project_id: t.project_id,
+                    session_id: String(t.id) // stable session id
+                };
+                try {
+                    await antigravityQuotaCache.refreshToken(tokenData as any);
+                    ok++;
+                    await new Promise(r => setTimeout(r, 100)); // mild pacing
+                } catch (e: any) {
+                    const status = e?.statusCode || e?.response?.status;
+                    if (status === 429 || status === 503) {
+                        skipped++;
+                        continue;
+                    }
+                    skipped++;
+                }
+            }
+            console.log(`[CronService] Quotas batch ${batchMod}/${batchDiv} refreshed: ok=${ok}, skipped=${skipped}, total=${selected.length}`);
+        } catch (err) {
+            console.error('[CronService] Failed to refresh Antigravity quotas batch:', (err as any)?.message || err);
         }
     }
 }

@@ -10,6 +10,7 @@ import { mergeSafetySettings, transformTools } from '../utils/gemini_transforms'
 import { antigravityTokenManager } from '../services/AntigravityTokenManager';
 import { AntigravityService } from '../services/AntigravityService';
 import { isAntigravityModel, extractRealModelName, getAntigravityModelNames, ANTIGRAVITY_SUFFIX } from '../config/antigravityConfig';
+import { mapModelName } from '../utils/antigravityUtils';
 
 const prisma = new PrismaClient();
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
@@ -35,12 +36,14 @@ const DEFAULT_SAFETY_SETTINGS = [
 function getAvailableModels() {
     // Cloud Code 渠道模型
     const cloudCodeModels = [
-        "gemini-2.5-flash-真流-[星星公益站-任何收费都是骗子]",
-        "gemini-2.5-flash-假流-[星星公益站-任何收费都是骗子]",
-        "gemini-2.5-pro-真流-[星星公益站-任何收费都是骗子]",
-        "gemini-2.5-pro-假流-[星星公益站-任何收费都是骗子]",
-        "gemini-3-pro-preview-真流-[星星公益站-任何收费都是骗子]",
-        "gemini-3-pro-preview-假流-[星星公益站-任何收费都是骗子]"
+        "gemini-2.5-flash-真流-[星星公益站-CLI渠道]",
+        "gemini-2.5-flash-假流-[星星公益站-CLI渠道]",
+        "gemini-2.5-pro-真流-[星星公益站-CLI渠道]",
+        "gemini-2.5-pro-假流-[星星公益站-CLI渠道]",
+        "gemini-3-pro-preview-真流-[星星公益站-CLI渠道]",
+        "gemini-3-pro-preview-假流-[星星公益站-CLI渠道]",
+        "gemini-3-flash-preview-真流-[星星公益站-CLI渠道]",
+        "gemini-3-flash-preview-假流-[星星公益站-CLI渠道]"
     ];
 
     // 反重力渠道模型
@@ -177,9 +180,9 @@ export class ProxyController {
         let realModelName = requestedModel;
         let useFakeStream = false;
 
-        if (requestedModel.includes('-[星星公益站-任何收费都是骗子]')) {
+        if (requestedModel.includes('-[星星公益站-CLI渠道]') || requestedModel.includes('-[星星公益站-任何收费都是骗子]') || requestedModel.includes('-[星星公益站-所有收费都骗子]')) {
             // Remove suffix
-            let base = requestedModel.replace('-[星星公益站-任何收费都是骗子]', '');
+            let base = requestedModel.replace('-[星星公益站-CLI渠道]', '').replace('-[星星公益站-任何收费都是骗子]', '').replace('-[星星公益站-所有收费都骗子]', '');
 
             // Check strategy
             if (base.includes('-假流')) {
@@ -200,11 +203,15 @@ export class ProxyController {
             // Check V3 Permissions
             const isAdmin = user.role === 'ADMIN';
             const hasV3Creds = activeV3CredCount > 0;
-
-            if (!isAdmin && !hasV3Creds && !isAdminKey) {
-                return reply.code(403).send({
-                    error: '🔒 此模型 (Gemini 3.0) 仅限管理员或上传了 3.0 凭证的用户使用。请先贡献 3.0 凭证！'
-                });
+            // 新增开关：允许未上传或无3.0Pro权限也可使用3.0系列（CLI）
+            const openAccessSetting = await prisma.systemSetting.findUnique({ where: { key: 'ENABLE_GEMINI3_OPEN_ACCESS' } });
+            const enableOpenAccess = openAccessSetting ? openAccessSetting.value === 'true' : false;
+            if (!enableOpenAccess) {
+                if (!isAdmin && !hasV3Creds && !isAdminKey) {
+                    return reply.code(403).send({
+                        error: '🔒 此模型 (Gemini 3.0) 仅限管理员或上传了 3.0 凭证的用户使用。请先贡献 3.0 凭证！'
+                    });
+                }
             }
             poolType = 'V3';
         }
@@ -286,6 +293,7 @@ export class ProxyController {
         const isStreaming = openAIBody.stream === true;
 
         const realModel = extractRealModelName(requestedModel);
+        const actualModelId = mapModelName(realModel);
         const group = realModel.includes('gemini-3') ? 'gemini3' : 'claude';
 
         // Load Antigravity Config
@@ -395,8 +403,9 @@ export class ProxyController {
             }
         }
 
-        // 获取 Antigravity Token (从公共池)
-        const token = await antigravityTokenManager.getToken();
+        // 获取 Antigravity Token (从公共池，按用户锁定避免跨用户并发共享)
+        const initialTtl = isStreaming ? 60000 : 30000;
+        const token = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3', modelId: actualModelId }, user.id, initialTtl);
         if (!token) {
             return reply.code(503).send({
                 error: { message: '没有可用的反重力渠道 Token，请联系管理员添加', type: 'service_unavailable' }
@@ -435,17 +444,13 @@ export class ProxyController {
                     console.error('[Antigravity] 请求计数失败:', e);
                 }
 
-                await AntigravityService.generateStreamResponse(
-                    openAIBody.messages,
-                    realModel,
-                    openAIBody,
-                    openAIBody.tools,
-                    token,
-                    async (data) => {
+                let attempts = 0;
+                let currentToken = token;
+                const onData = async (data: any) => {
                         // 记录 Token 使用
                         if (!tokenUsed) {
                             await prisma.antigravityToken.update({
-                                where: { id: token.id },
+                                where: { id: currentToken.id },
                                 data: { total_used: { increment: 1 }, last_used_at: new Date(), fail_count: 0 }
                             }).catch(() => { });
                             tokenUsed = true;
@@ -507,8 +512,66 @@ export class ProxyController {
                             };
                             reply.raw.write(`data: ${JSON.stringify(endChunk)}\n\n`);
                         }
+                };
+                while (attempts < 5) {
+                    try {
+                        await AntigravityService.generateStreamResponse(
+                            openAIBody.messages,
+                            realModel,
+                            openAIBody,
+                            openAIBody.tools,
+                            currentToken,
+                            onData
+                        );
+                        break;
+                    } catch (err: any) {
+                        const status = err?.statusCode || err?.response?.status;
+                        const msg = err?.body || err?.message || '';
+                        if (status === 429 || /Resource has been exhausted/i.test(String(msg))) {
+                            let cooldownMs = 60000;
+                            try {
+                                const obj = JSON.parse(String(msg));
+                                const details = obj?.error?.details || [];
+                                for (const d of details) {
+                                    if (d['@type'] && String(d['@type']).includes('google.rpc.ErrorInfo')) {
+                                        const ts = d?.metadata?.quotaResetTimeStamp;
+                                        const retryDelay = d?.metadata?.retryDelay ? parseInt(d.metadata.retryDelay, 10) : 0;
+                                        if (ts) {
+                                            const ms = new Date(ts).getTime() - Date.now();
+                                            if (ms > 0) cooldownMs = ms;
+                                        } else if (retryDelay > 0) {
+                                            cooldownMs = retryDelay * 1000;
+                                        }
+                                        break;
+                                    }
+                                }
+                            } catch {}
+                            try { await antigravityTokenManager.markAsCooling(currentToken.id, cooldownMs); } catch {}
+                            await antigravityTokenManager.releaseLock(currentToken.id, user.id);
+                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3' }, user.id, 60000);
+                            if (!next) throw err;
+                            currentToken = next;
+                            attempts++;
+                            continue;
+                        } else if (status === 403) {
+                            try { await antigravityTokenManager.markAsDead(currentToken.id); } catch {}
+                            await antigravityTokenManager.releaseLock(currentToken.id, user.id);
+                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3' }, user.id, 60000);
+                            if (!next) throw err;
+                            currentToken = next;
+                            attempts++;
+                            continue;
+                        } else if (status === 500) {
+                            await antigravityTokenManager.releaseLock(currentToken.id, user.id);
+                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3' }, user.id, 60000);
+                            if (!next) throw err;
+                            currentToken = next;
+                            attempts++;
+                            continue;
+                        }
+                        throw err;
                     }
-                );
+                }
 
                 // 流结束后更新 Token 用量
                 // 如果没有收到 usage 事件，使用保底估算值
@@ -528,6 +591,7 @@ export class ProxyController {
 
                 reply.raw.write('data: [DONE]\n\n');
                 reply.raw.end();
+                try { await antigravityTokenManager.releaseLock(currentToken.id, user.id); } catch {}
 
             } else {
                 // 非流式响应 - 立即计数请求次数
@@ -544,13 +608,71 @@ export class ProxyController {
                     console.error('[Antigravity] 非流式请求计数失败:', e);
                 }
 
-                const { content, reasoningContent, toolCalls, usage } = await AntigravityService.generateResponse(
-                    openAIBody.messages,
-                    realModel,
-                    openAIBody,
-                    openAIBody.tools,
-                    token
-                );
+                let attempts2 = 0;
+                let currentToken2 = token;
+                let gotResult = false, content = '', reasoningContent: string | undefined = undefined, toolCalls: any[] = [], usage: any = undefined;
+                while (attempts2 < 5) {
+                    try {
+                        const res = await AntigravityService.generateResponse(
+                            openAIBody.messages,
+                            realModel,
+                            openAIBody,
+                            openAIBody.tools,
+                            currentToken2,
+                            { retry_on_429: true, max_retries: 5 }
+                        );
+                        content = res.content; reasoningContent = res.reasoningContent; toolCalls = res.toolCalls || []; usage = res.usage; gotResult = true;
+                        break;
+                    } catch (err: any) {
+                        const status = err?.statusCode || err?.response?.status;
+                        const msg = err?.body || err?.message || '';
+                        if (status === 429 || /Resource has been exhausted/i.test(String(msg))) {
+                            let cooldownMs = 60000;
+                            try {
+                                const obj = JSON.parse(String(msg));
+                                const details = obj?.error?.details || [];
+                                for (const d of details) {
+                                    if (d['@type'] && String(d['@type']).includes('google.rpc.ErrorInfo')) {
+                                        const ts = d?.metadata?.quotaResetTimeStamp;
+                                        const retryDelay = d?.metadata?.retryDelay ? parseInt(d.metadata.retryDelay, 10) : 0;
+                                        if (ts) {
+                                            const ms = new Date(ts).getTime() - Date.now();
+                                            if (ms > 0) cooldownMs = ms;
+                                        } else if (retryDelay > 0) {
+                                            cooldownMs = retryDelay * 1000;
+                                        }
+                                        break;
+                                    }
+                                }
+                            } catch {}
+                            try { await antigravityTokenManager.markAsCooling(currentToken2.id, cooldownMs); } catch {}
+                            await antigravityTokenManager.releaseLock(currentToken2.id, user.id);
+                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3' }, user.id, 30000);
+                            if (!next) throw err;
+                            currentToken2 = next;
+                            attempts2++;
+                            continue;
+                        } else if (status === 403) {
+                            try { await antigravityTokenManager.markAsDead(currentToken2.id); } catch {}
+                            await antigravityTokenManager.releaseLock(currentToken2.id, user.id);
+                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3' }, user.id, 30000);
+                            if (!next) throw err;
+                            currentToken2 = next;
+                            attempts2++;
+                            continue;
+                        } else if (status === 500) {
+                            await antigravityTokenManager.releaseLock(currentToken2.id, user.id);
+                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3' }, user.id, 30000);
+                            if (!next) throw err;
+                            currentToken2 = next;
+                            attempts2++;
+                            continue;
+                        }
+                        throw err;
+                    }
+                }
+
+                if (!gotResult) { throw makeHttpError(500, 'Failed to generate response after retries'); }
 
                 // 记录 Token 使用
                 await prisma.antigravityToken.update({
@@ -578,7 +700,7 @@ export class ProxyController {
                     message.tool_calls = toolCalls;
                 }
 
-                return reply.send({
+                const responseObj = {
                     id: responseId,
                     object: 'chat.completion',
                     created,
@@ -589,7 +711,9 @@ export class ProxyController {
                         finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop'
                     }],
                     usage
-                });
+                };
+                try { await antigravityTokenManager.releaseLock(currentToken2.id, user.id); } catch {}
+                return reply.send(responseObj);
             }
 
         } catch (error: any) {
@@ -652,6 +776,15 @@ export class ProxyController {
                 reply.raw.write('data: [DONE]\n\n');
                 reply.raw.end();
             }
+            try {
+                if (isStreaming) {
+                    // currentToken may be rotated; ensure last lock released
+                    // no-op if not held by this user
+                    await antigravityTokenManager.releaseLock((token as any).id, user.id);
+                } else {
+                    await antigravityTokenManager.releaseLock((token as any).id, user.id);
+                }
+            } catch {}
         }
     }
 

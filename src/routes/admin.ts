@@ -660,6 +660,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     const cliSharedSetting = await prisma.systemSetting.findUnique({ where: { key: 'ENABLE_CLI_SHARED_MODE' } });
     const legacySharedSetting = await prisma.systemSetting.findUnique({ where: { key: 'ENABLE_SHARED_MODE' } });
     const configSetting = await prisma.systemSetting.findUnique({ where: { key: 'SYSTEM_CONFIG' } });
+    const gemini3OpenSetting = await prisma.systemSetting.findUnique({ where: { key: 'ENABLE_GEMINI3_OPEN_ACCESS' } });
 
     let config = { ...DEFAULT_SYSTEM_CONFIG };
     if (configSetting) {
@@ -679,6 +680,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
       enable_cli_shared_mode: cliSharedSetting ? cliSharedSetting.value === 'true' : (legacySharedSetting ? legacySharedSetting.value === 'true' : true),
       // 为前端兼容保留旧字段（仅作为别名）
       enable_shared_mode: cliSharedSetting ? cliSharedSetting.value === 'true' : (legacySharedSetting ? legacySharedSetting.value === 'true' : true),
+      enable_gemini3_open_access: gemini3OpenSetting ? gemini3OpenSetting.value === 'true' : false,
       antigravity_strict_mode: agStrictSetting ? agStrictSetting.value === 'true' : false,
       force_discord_bind: forceBindSetting ? forceBindSetting.value === 'true' : false,
       ...config
@@ -697,6 +699,14 @@ export default async function adminRoutes(fastify: FastifyInstance) {
         where: { key: 'ENABLE_CLI_SHARED_MODE' },
         update: { value: String(cliShared) },
         create: { key: 'ENABLE_CLI_SHARED_MODE', value: String(cliShared) }
+      });
+    }
+    // Handle Gemini3 Open Access toggle
+    if (body.enable_gemini3_open_access !== undefined) {
+      await prisma.systemSetting.upsert({
+        where: { key: 'ENABLE_GEMINI3_OPEN_ACCESS' },
+        update: { value: String(body.enable_gemini3_open_access) },
+        create: { key: 'ENABLE_GEMINI3_OPEN_ACCESS', value: String(body.enable_gemini3_open_access) }
       });
     }
 
@@ -744,7 +754,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
       });
     }
 
-    return { success: true, ...newConfig, enable_cli_shared_mode: cliShared, antigravity_strict_mode: body.antigravity_strict_mode };
+    return { success: true, ...newConfig, enable_cli_shared_mode: cliShared, enable_gemini3_open_access: body.enable_gemini3_open_access, antigravity_strict_mode: body.antigravity_strict_mode };
   });
 
   // 8. List Users (Pagination + Search)

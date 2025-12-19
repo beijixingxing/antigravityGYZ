@@ -59,7 +59,7 @@ export class CredentialPoolManager {
    * Get a valid credential via Round-Robin.
    * Iterates through the list to find a working one.
    */
-  async getRoundRobinCredential(type: 'GLOBAL' | 'V3' = 'GLOBAL'): Promise<{ credentialId: number; accessToken: string; projectId: string } | null> {
+  async getRoundRobinCredential(type: 'GLOBAL' | 'V3' = 'GLOBAL', userId?: number, ttlMs: number = 30000): Promise<{ credentialId: number; accessToken: string; projectId: string } | null> {
     const targetPool = type === 'V3' ? POOL_KEY_V3 : POOL_KEY;
 
     // 1. Get pool size to determine max attempts (prevent infinite loop)
@@ -88,10 +88,22 @@ export class CredentialPoolManager {
 
         const credentialId = parseInt(credentialIdStr, 10);
 
+        // 跳过被其他用户持有锁的凭证
+        if (userId) {
+            const lockKey = `CRED_LOCK:CLI:${credentialId}`;
+            const holder = await redis.get(lockKey);
+            if (holder && parseInt(holder, 10) !== userId) continue;
+        }
+
         // Load & Validate
         try {
             const cred = await this.loadAndRefreshToken(credentialId);
             if (cred) {
+                // 加锁
+                if (userId) {
+                    const ok = await this.acquireLock(credentialId, userId, ttlMs);
+                    if (!ok) continue;
+                }
                 return cred;
             }
         } catch (error: any) {
@@ -236,6 +248,26 @@ export class CredentialPoolManager {
 
     await redis.lrem(POOL_KEY, 0, String(credentialId));
     await redis.lrem(POOL_KEY_V3, 0, String(credentialId));
+  }
+
+  async acquireLock(credentialId: number, userId: number, ttlMs: number = 30000): Promise<boolean> {
+    const key = `CRED_LOCK:CLI:${credentialId}`;
+    const holder = await redis.get(key);
+    if (holder && parseInt(holder, 10) !== userId) return false;
+    const ok = await redis.set(key, String(userId), 'PX', ttlMs, 'NX');
+    if (ok === null && holder === String(userId)) {
+      await redis.pexpire(key, ttlMs);
+      return true;
+    }
+    return ok !== null;
+  }
+
+  async releaseLock(credentialId: number, userId: number): Promise<void> {
+    const key = `CRED_LOCK:CLI:${credentialId}`;
+    const holder = await redis.get(key);
+    if (holder && parseInt(holder, 10) === userId) {
+      await redis.del(key);
+    }
   }
 
   async markAsDead(credentialId: number) {
