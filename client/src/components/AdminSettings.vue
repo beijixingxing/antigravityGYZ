@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { api } from '../utils/api';
-import AdminQuotaSettings from './AdminQuotaSettings.vue';
-
 const isSharedMode = ref(true);
 const antigravityStrictMode = ref(false);
 const forceDiscordBind = ref(false);
@@ -14,14 +12,8 @@ const message = ref('');
 const healthCheckLoading = ref<'cli' | 'antigravity' | null>(null);
 const healthCheckResult = ref<any>(null);
 
-// Announcement
-const announcementContent = ref('');
-const isPublishing = ref(false);
-const publishMessage = ref('');
-
 onMounted(async () => {
   await fetchSettings();
-  await fetchAnnouncement();
 });
 
 const fetchSettings = async () => {
@@ -34,27 +26,6 @@ const fetchSettings = async () => {
   } catch (e) {
     console.error('Failed to fetch settings', e);
   }
-};
-
-const fetchAnnouncement = async () => {
-    try {
-        const res = await api.get('/announcement');
-        if (res.data.content) announcementContent.value = res.data.content;
-    } catch (e) { console.error(e); }
-};
-
-const publishAnnouncement = async () => {
-    isPublishing.value = true;
-    publishMessage.value = '';
-    try {
-        await api.post('/admin/announcement', { content: announcementContent.value });
-        publishMessage.value = '公告已发布！所有用户下次访问将强制弹出。';
-        setTimeout(() => publishMessage.value = '', 5000);
-    } catch (e) {
-        publishMessage.value = '发布失败';
-    } finally {
-        isPublishing.value = false;
-    }
 };
 
 const toggleMode = async () => {
@@ -116,9 +87,6 @@ const toggleGemini3OpenAccess = async () => {
     isLoading.value = false;
   }
 };
-
-// Reference to AdminQuotaSettings component to call its save method
-const quotaSettingsRef = ref();
 
 // Health Check Functions
 const runCliHealthCheck = async () => {
@@ -203,12 +171,6 @@ const checkDeadAntigravity = async () => {
   } finally {
     healthCheckLoading.value = null;
   }
-};
-const saveSettings = async () => {
-    if (quotaSettingsRef.value) {
-        await quotaSettingsRef.value.saveSettings();
-        message.value = quotaSettingsRef.value.message;
-    }
 };
 </script>
 
@@ -321,7 +283,6 @@ const saveSettings = async () => {
         </div>
     </div>
 
-    <!-- Quota & Rate Limit Settings (Integrated) -->
     <!-- Health Check Section -->
     <div class="bg-white/5 backdrop-blur-xl border border-purple-500/30 rounded-2xl p-4 shadow-[0_0_15px_rgba(139,92,246,0.1)]">
         <div class="flex items-center gap-4 mb-4">
@@ -409,55 +370,6 @@ const saveSettings = async () => {
                 </div>
             </div>
         </div>
-    </div>
-
-    <AdminQuotaSettings ref="quotaSettingsRef">
-        <template #announcement>
-            <!-- Announcement Editor (Injected into AdminQuotaSettings grid) -->
-            <div class="bg-white/5 backdrop-blur-xl border border-purple-500/30 rounded-2xl p-4 shadow-[0_0_15px_rgba(139,92,246,0.1)] h-full flex flex-col w-full">
-                <div class="flex items-center gap-4 mb-3">
-                    <h2 class="text-lg font-bold text-[#C4B5FD] flex items-center gap-2 whitespace-nowrap">
-                        <span>📢 全局公告</span>
-                    </h2>
-                    <div class="h-4 w-[1px] bg-white/10"></div>
-                    <p class="text-xs text-[#A5B4FC] opacity-60">发布后强制弹窗</p>
-                </div>
-                
-                <div class="relative group flex-1">
-                    <textarea
-                        v-model="announcementContent"
-                        class="w-full h-full bg-black/20 border border-white/10 rounded-xl p-3 text-sm text-white focus:border-[#8B5CF6] outline-none transition group-hover:border-[#8B5CF6]/50 group-hover:shadow-[0_0_10px_rgba(139,92,246,0.1)] resize-none"
-                        placeholder="在此输入公告内容..."
-                    ></textarea>
-                </div>
-
-                <div class="flex justify-end items-center gap-4 mt-3">
-                    <span v-if="publishMessage" class="text-xs font-bold text-green-400 animate-pulse">{{ publishMessage }}</span>
-                    <button
-                        @click="publishAnnouncement"
-                        :disabled="isPublishing"
-                        class="px-5 py-1.5 bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white rounded-lg font-bold text-sm hover:opacity-90 transition shadow-lg shadow-indigo-500/20 disabled:opacity-50 hover:scale-105 hover:shadow-[0_0_20px_rgba(139,92,246,0.5)] duration-300"
-                    >
-                        {{ isPublishing ? '发布中...' : '发布公告' }}
-                    </button>
-                </div>
-            </div>
-        </template>
-    </AdminQuotaSettings>
-
-    <!-- Save Config Button -->
-    <div class="flex justify-end items-center gap-4 pt-4 border-t border-white/10">
-        <span v-if="message" class="text-sm font-bold animate-pulse" :class="message.includes('失败') ? 'text-red-400' : 'text-green-400'">
-            {{ message }}
-        </span>
-        <button
-            @click="saveSettings"
-            :disabled="isLoading"
-            class="px-8 py-3 bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] hover:opacity-90 text-white font-bold rounded-full shadow-lg shadow-indigo-500/30 transition-all disabled:opacity-50 hover:scale-105 hover:shadow-[0_0_20px_rgba(139,92,246,0.5)] duration-300"
-        >
-            <span v-if="isLoading" class="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2"></span>
-            {{ isLoading ? '保存中...' : '保存配置' }}
-        </button>
     </div>
   </div>
 </template>

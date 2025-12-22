@@ -321,15 +321,24 @@ export class ProxyController {
         }
 
         // 反重力渠道速率限制检查（每分钟请求数限制）
-        if (!isAdminKey && agRateLimit > 0) {
+        // 动态计算速率限制：如果用户上传了凭证，使用 rate_limit_increment，否则使用 rate_limit
+        let effectiveRateLimit = agRateLimit;
+        if (!isAdminKey) {
+            const hasAccess = await antigravityTokenManager.hasAntigravityAccess(user.id);
+            if (hasAccess) {
+                effectiveRateLimit = config.rate_limit_increment ?? agRateLimit;
+            }
+        }
+
+        if (!isAdminKey && effectiveRateLimit > 0) {
             const now = Math.floor(Date.now() / 60000); // 当前分钟
             const rateKey = `AG_RATE:${user.id}:${now}`;
             const current = parseInt((await redis.get(rateKey)) || '0', 10);
 
-            if (current >= agRateLimit) {
+            if (current >= effectiveRateLimit) {
                 return reply.code(429).send({
                     error: {
-                        message: `反重力渠道速率限制：每分钟最多 ${agRateLimit} 次请求，请稍后再试`,
+                        message: `反重力渠道速率限制：每分钟最多 ${effectiveRateLimit} 次请求，请稍后再试`,
                         type: 'rate_limit_exceeded'
                     }
                 });

@@ -452,10 +452,15 @@ export class AntigravityTokenManager {
 
     /**
      * Check if user has uploaded any Antigravity token (and thus has access to the pool)
+     * Only counts ACTIVE or COOLING tokens that are enabled.
      */
     async hasAntigravityAccess(userId: number): Promise<boolean> {
         const count = await prisma.antigravityToken.count({
-            where: { owner_id: userId }
+            where: {
+                owner_id: userId,
+                is_enabled: true,
+                status: { in: [AntigravityTokenStatus.ACTIVE, AntigravityTokenStatus.COOLING] }
+            }
         });
         return count > 0;
     }

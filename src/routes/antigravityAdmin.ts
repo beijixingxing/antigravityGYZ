@@ -100,7 +100,7 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
         if (!await verifyAdmin(req, reply)) return;
 
         const setting = await prisma.systemSetting.findUnique({ where: { key: 'ANTIGRAVITY_CONFIG' } });
-        let config = { claude_limit: 100, gemini3_limit: 200, rate_limit: 30 };
+        let config = { claude_limit: 100, gemini3_limit: 200, rate_limit: 30, rate_limit_increment: 30 };
 
         if (setting) {
             try {
@@ -143,12 +143,14 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
     app.post('/config', async (req, reply) => {
         if (!await verifyAdmin(req, reply)) return;
 
+        const body = req.body as any;
         const {
             claude_limit, gemini3_limit, rate_limit,
             increment_per_token_claude, increment_per_token_gemini3,
             use_token_quota, claude_token_quota, gemini3_token_quota,
-            increment_token_per_token_claude, increment_token_per_token_gemini3
-        } = req.body as any;
+            increment_token_per_token_claude, increment_token_per_token_gemini3,
+            rate_limit_increment
+        } = body;
 
         // Validation (basic)
         if (
@@ -162,6 +164,7 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
             claude_limit,
             gemini3_limit,
             rate_limit: typeof rate_limit === 'number' ? rate_limit : 30,
+            rate_limit_increment: typeof rate_limit_increment === 'number' ? rate_limit_increment : 30,
             increment_per_token_claude: typeof increment_per_token_claude === 'number' ? increment_per_token_claude : 0,
             increment_per_token_gemini3: typeof increment_per_token_gemini3 === 'number' ? increment_per_token_gemini3 : 0,
             use_token_quota: !!use_token_quota,
@@ -210,7 +213,7 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
 
         // 3. Get Config for Limits
         const setting = await prisma.systemSetting.findUnique({ where: { key: 'ANTIGRAVITY_CONFIG' } });
-        let config = { claude_limit: 100, gemini3_limit: 200, claude_token_quota: 100000, gemini3_token_quota: 200000 };
+        let config = { claude_limit: 100, gemini3_limit: 200, claude_token_quota: 100000, gemini3_token_quota: 200000, rate_limit: 30, rate_limit_increment: 30 };
         if (setting) {
             try { config = { ...config, ...JSON.parse(setting.value) }; } catch (e) { }
         }
@@ -268,6 +271,16 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
         leaderboard.sort((a, b) => b.total - a.total);
         const top25 = leaderboard.slice(0, 25);
 
+        // 6. Get Token Stats (Total, Active, Inactive, Total Capacity)
+        const totalTokens = await prisma.antigravityToken.count();
+        const inactiveTokens = await prisma.antigravityToken.count({ where: { is_enabled: false } });
+        // activeTokens already calculated above (includes COOLING)
+        
+        // Calculate total capacity based on active tokens
+        // Assuming 250k tokens per active credential for Gemini 3.0 as a baseline for "Total Capacity" display
+        // Or use requests capacity if not in token mode
+        const totalCapacityDisplay = useTokenQuota ? (activeTokens * 250000) : (activeTokens * 250);
+
         return {
             date: todayStr,
             usage: {
@@ -293,6 +306,12 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
             meta: {
                 active_tokens: activeTokens,
                 limits: config
+            },
+            token_stats: {
+                total: totalTokens,
+                active: activeTokens,
+                inactive: inactiveTokens,
+                total_capacity: totalCapacityDisplay
             },
             leaderboard: top25
         };

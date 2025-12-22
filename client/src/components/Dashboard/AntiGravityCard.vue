@@ -4,6 +4,7 @@
       <div class="card-title">
         ⚡ 反重力状态
       </div>
+      <div class="rpm-badge" v-if="stats.antigravity_usage?.rate_limit">RPM <span class="rpm-value">{{ stats.antigravity_usage.rate_limit }}</span></div>
     </div>
     <div class="card-body">
       <div class="ag-status">
@@ -86,45 +87,77 @@ const gaugeStyle = (percentage: number, color: string) => {
 
 <style scoped>
 .card {
-    background: rgba(30, 41, 59, 0.4);
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    border-radius: 16px;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    background: linear-gradient(180deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.9) 100%);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(139, 92, 246, 0.2);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
     overflow: hidden;
-    transition: transform 0.2s, box-shadow 0.2s;
-    height: 100%;
+    transition: all 0.3s ease;
+    height: 336px;
+    display: flex;
+    flex-direction: column;
 }
 
 .card:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 10px 20px -3px rgba(0, 0, 0, 0.2);
-    border-color: rgba(255, 255, 255, 0.1);
+    transform: translateY(-6px);
+    box-shadow: 0 12px 40px rgba(139, 92, 246, 0.15);
+    border-color: rgba(139, 92, 246, 0.4);
 }
 
 .card-header {
     padding: 20px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    background: linear-gradient(90deg, rgba(139, 92, 246, 0.05) 0%, transparent 100%);
     display: flex;
     justify-content: space-between;
     align-items: center;
 }
 
 .card-title {
-    font-size: 1.125rem;
-    font-weight: 700;
+    font-size: 1.25rem;
+    font-weight: 800;
+    color: #E9D5FF;
+    text-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
+    letter-spacing: 0.5px;
+}
+
+.rpm-badge {
+    background: rgba(139, 92, 246, 0.15);
+    border: 1px solid rgba(139, 92, 246, 0.4);
     color: #C4B5FD;
+    font-size: 0.75rem;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    box-shadow: 0 0 15px rgba(139, 92, 246, 0.2);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.rpm-value {
+    color: #67e8f9;
+    font-size: 0.9rem;
+    font-weight: 900;
+    text-shadow: 0 0 10px rgba(103, 232, 249, 0.5);
 }
 
 .card-body {
-    padding: 20px;
+    padding: 10px 20px 20px 20px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
 }
 
 .ag-status {
     display: flex;
     flex-direction: column;
-    gap: 20px;
-    margin-top: 24px;
+    gap: 10px;
+    margin-top: 0;
+    flex: 1;
+    justify-content: center;
 }
 
 .ag-gauges {
@@ -205,15 +238,15 @@ const gaugeStyle = (percentage: number, color: string) => {
 }
 
 .gauge-small {
-    width: 100px;
-    height: 100px;
-    margin-bottom: 8px;
+    width: 80px;
+    height: 80px;
+    margin-bottom: 6px;
 }
 
 .gauge-small .gauge-inner {
-    width: 70px;
-    height: 70px;
-    font-size: 1rem;
+    width: 56px;
+    height: 56px;
+    font-size: 0.9rem;
 }
 
 .gauge-claude {

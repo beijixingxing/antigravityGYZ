@@ -16,7 +16,10 @@
     <div v-if="currentTab === 'home'" class="grid">
       <!-- Announcement Card -->
       <div class="card-wrapper">
-        <AnnouncementCard :content="announcementData.content" />
+        <AnnouncementCard 
+            :content="announcementData.content" 
+            @click="openAnnouncementModal"
+        />
       </div>
 
       <!-- Usage Card -->
@@ -32,56 +35,68 @@
 
     <!-- Upload Tab -->
     <div v-else-if="currentTab === 'upload'" class="max-w-4xl mx-auto space-y-8">
-        <div class="bg-gradient-to-br from-indigo-100 to-purple-100 text-indigo-950 rounded-[40px] p-10 shadow-2xl border border-white/50">
-          <h2 class="text-3xl font-black mb-4 text-[#4338CA]">CLI 凭证上传</h2>
-          <p class="text-lg font-medium opacity-70 mb-6 text-[#4338CA]">
-            上传 Google Cloud Code CLI 凭证 JSON 文件，立即解锁更多额度。若包含 Gemini 3.0 权限，将自动识别并解锁至臻权限。
-          </p>
-
-          <div class="relative group">
-            <textarea 
-              v-model="uploadContent" 
-              rows="6" 
-              class="w-full bg-white/60 border-2 border-transparent rounded-3xl p-6 text-indigo-950 placeholder-indigo-950/30 focus:border-indigo-400 focus:bg-white focus:outline-none font-mono text-sm resize-none transition-all"
-              placeholder='在此粘贴 JSON 内容，或者点击下方上传文件...'
-            ></textarea>
-            
-            <div class="absolute bottom-4 right-4">
-               <label class="cursor-pointer bg-white text-indigo-600 px-4 py-2 rounded-full font-bold shadow-md hover:bg-indigo-50 transition flex items-center gap-2">
-                 <span>{{ filesToUpload.length > 0 ? `已选 ${filesToUpload.length} 个文件` : '📂 批量上传' }}</span>
-                 <input type="file" accept=".json" multiple class="hidden" @change="handleFileUpload">
-               </label>
+        <div class="ag-card-style rounded-[40px] overflow-hidden transition-all duration-300">
+          <div
+            class="p-10 cursor-pointer hover:bg-white/5 transition-colors"
+            @click="isUploadExpanded = !isUploadExpanded"
+          >
+            <div class="flex items-center justify-between">
+                <h2 class="text-3xl font-black text-[#d8b4fe] drop-shadow-[0_0_10px_rgba(139,92,246,0.3)]">CLI 凭证上传</h2>
+                <div class="text-[#d8b4fe] text-2xl transition-transform duration-300" :class="{ 'rotate-180': isUploadExpanded }">
+                    ▼
+                </div>
             </div>
+            <p class="text-lg font-medium opacity-90 mt-4 text-[#a78bfa]">
+                上传 Google Cloud Code CLI 凭证 JSON 文件，立即解锁更多额度。若包含 Gemini 3.0 权限，将自动识别并解锁至臻权限。
+            </p>
           </div>
 
-          <div class="flex items-center justify-end mt-6 gap-4 flex-wrap">
-             <a 
-               href="https://oauth.beijixingxing.com/" 
-               target="_blank"
-               class="px-6 py-4 text-white bg-green-500 rounded-full font-bold text-lg hover:bg-green-600 transition-all shadow-lg shadow-green-500/30 flex items-center gap-2"
-             >
-               🔗 获取凭证 / Get Credential
-             </a>
+          <div v-show="isUploadExpanded" class="px-10 pb-10 border-t border-[#8b5cf6]/20 pt-8">
+            <div class="relative group">
+                <textarea
+                v-model="uploadContent"
+                rows="6"
+                class="w-full bg-[#2d1b5a]/50 border-2 border-[#8b5cf6]/20 rounded-3xl p-6 text-white placeholder-[#a78bfa80] focus:border-[#8b5cf6] focus:bg-[#2d1b5a]/80 focus:outline-none font-mono text-sm resize-none transition-all"
+                placeholder='在此粘贴 JSON 内容，或者点击下方上传文件...'
+                ></textarea>
+                
+                <div class="absolute bottom-4 right-4">
+                <label class="cursor-pointer bg-[#3a2270] text-[#d8b4fe] border border-[#8b5cf6]/30 px-4 py-2 rounded-full font-bold shadow-lg hover:bg-[#4c2e91] transition flex items-center gap-2">
+                    <span>{{ filesToUpload.length > 0 ? `已选 ${filesToUpload.length} 个文件` : '📂 批量上传' }}</span>
+                    <input type="file" accept=".json" multiple class="hidden" @change="handleFileUpload">
+                </label>
+                </div>
+            </div>
 
-             <button 
-               @click="handleCheckRaw" 
-               :disabled="isUploading || !uploadContent"
-               class="px-6 py-4 text-indigo-600 bg-white border-2 border-indigo-100 rounded-full font-bold text-lg hover:bg-indigo-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-             >
-               {{ isCheckingRaw ? '检测中...' : '🔍 仅检测 3.0 资格' }}
-             </button>
+            <div class="flex items-center justify-end mt-6 gap-4 flex-wrap">
+                <a
+                href="https://oauth.beijixingxing.com/"
+                target="_blank"
+                class="px-6 py-4 text-white bg-gradient-to-r from-[#10b981] to-[#059669] border border-emerald-500/30 rounded-full font-bold text-lg hover:opacity-90 transition-all shadow-lg shadow-emerald-500/20 flex items-center gap-2"
+                >
+                🔗 获取凭证 / Get Credential
+                </a>
 
-             <button
-               @click="handleUpload"
-               :disabled="isUploading"
-               class="px-10 py-4 bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white rounded-full font-black text-lg hover:opacity-90 hover:scale-105 hover:shadow-[0_0_20px_rgba(139,92,246,0.5)] transition-all duration-300 shadow-lg shadow-indigo-500/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:shadow-none"
-             >
-               {{ isUploading ? '验证中...' : '验证并提交 ✨' }}
-             </button>
+                <button
+                @click="handleCheckRaw"
+                :disabled="isUploading || !uploadContent"
+                class="px-6 py-4 text-[#d8b4fe] bg-white/5 border-2 border-[#8b5cf6]/20 rounded-full font-bold text-lg hover:bg-white/10 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                {{ isCheckingRaw ? '检测中...' : '🔍 仅检测 3.0 资格' }}
+                </button>
+
+                <button
+                @click="handleUpload"
+                :disabled="isUploading"
+                class="px-10 py-4 bg-gradient-to-r from-[#8b5cf6] to-[#7c3aed] text-white rounded-full font-black text-lg hover:opacity-90 hover:scale-105 hover:shadow-[0_0_20px_rgba(139,92,246,0.5)] transition-all duration-300 shadow-lg shadow-indigo-500/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:shadow-none"
+                >
+                {{ isUploading ? '验证中...' : '验证并提交 ✨' }}
+                </button>
+            </div>
           </div>
         </div>
         
-        <div class="bg-white/5 border border-white/10 rounded-[40px] p-8 text-white">
+        <div class="ag-card-style rounded-[40px] p-8 text-white">
            <h3 class="text-xl font-bold mb-6 text-[#C4B5FD]">我的上传记录</h3>
            <div v-if="myCredentials.length === 0" class="text-center py-8 text-white/30">
              空空如也，快去上传一个吧！
@@ -115,31 +130,63 @@
     </div>
 
     <!-- Keys Tab -->
-    <div v-else-if="currentTab === 'keys'" class="max-w-4xl mx-auto text-white">
-        <div class="flex justify-between items-center mb-8">
-          <h2 class="text-3xl font-bold text-[#C4B5FD]">API 密钥管理</h2>
-          <button @click="openCreateKeyModal" class="px-6 py-3 bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white rounded-full font-black hover:opacity-90 transition-colors shadow-lg shadow-indigo-500/20">
-            + 新建密钥
-          </button>
+    <div v-else-if="currentTab === 'keys'" class="key-management-page max-w-4xl mx-auto">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-2xl font-bold text-[#d8b4fe]">API 密钥管理</h2>
+            <button @click="openCreateKeyModal" class="copy-btn font-bold">+ 新建密钥</button>
         </div>
-        <div class="grid gap-4">
-          <div v-for="k in apiKeys" :key="k.id" class="bg-white/10 border border-white/10 rounded-3xl p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <div class="flex flex-col">
-              <div class="flex items-center gap-3 mb-1">
-                  <span class="font-bold text-lg">{{ k.name || '未命名密钥' }}</span>
-                  <span v-if="k.type === 'ADMIN'" class="bg-yellow-500/20 text-yellow-300 text-[10px] font-black px-2 py-0.5 rounded uppercase border border-yellow-500/30">Admin Key</span>
-                  <span v-if="!k.is_active" class="bg-red-500/20 text-red-300 text-[10px] font-black px-2 py-0.5 rounded uppercase border border-red-500/30">Disabled</span>
-              </div>
-              <div class="flex items-center gap-2">
-                <code class="text-sm font-mono text-teal-200/80 bg-black/20 px-2 py-1 rounded break-all">{{ k.key }}</code>
-                <button @click="copyToClipboard(k.key)" class="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/50 hover:text-white transition-colors">📋</button>
-              </div>
+
+        <div v-if="apiKeys.length === 0" class="text-center py-8 text-[#a78bfa]">
+            暂无密钥，请点击右上角创建
+        </div>
+
+        <div v-else class="space-y-6">
+            <div v-for="k in apiKeys" :key="k.id" class="api-key-card">
+                <!-- 密钥头部信息 -->
+                <div class="flex justify-between items-center mb-4">
+                    <div class="flex items-center gap-3">
+                        <span class="text-[#d8b4fe] font-bold text-lg">{{ k.name || '未命名密钥' }}</span>
+                        <span v-if="k.type === 'ADMIN'" class="bg-yellow-500/20 text-yellow-300 text-[10px] px-2 py-0.5 rounded border border-yellow-500/30 font-bold">ADMIN</span>
+                        <span v-if="!k.is_active" class="bg-red-500/20 text-red-300 text-[10px] px-2 py-0.5 rounded border border-red-500/30 font-bold">DISABLED</span>
+                    </div>
+                    <button @click="deleteKey(k.id)" class="text-red-400 hover:text-red-300 text-sm transition opacity-60 hover:opacity-100">删除</button>
+                </div>
+
+                <!-- 密钥文本 -->
+                <div class="api-key-text font-mono">
+                    {{ k.key }}
+                </div>
+
+                <!-- 功能按钮组 -->
+                <div class="key-btn-group">
+                    <button @click="copyToClipboard(k.key)" class="copy-btn">复制</button>
+                    <button @click="toggleKey(k)" class="change-btn">{{ k.is_active ? '禁用' : '启用' }}</button>
+                </div>
             </div>
-            <div class="flex items-center gap-3 self-end md:self-center">
-                <button @click="toggleKey(k)" class="px-4 py-2 rounded-xl text-xs font-bold transition-colors" :class="k.is_active ? 'bg-white/10 hover:bg-yellow-500/20 text-white' : 'bg-green-500/20 text-green-300 hover:bg-green-500/30'">{{ k.is_active ? '禁用' : '启用' }}</button>
-                <button @click="deleteKey(k.id)" class="w-10 h-10 rounded-xl bg-white/5 hover:bg-red-500/20 text-white/50 hover:text-red-300 flex items-center justify-center font-bold transition">✕</button>
+        </div>
+
+        <!-- 使用说明模块 (独立卡片) -->
+        <div class="api-key-card mt-6">
+            <div class="usage-guide" style="border-top: none; padding-top: 0;">
+                <h3>使用方法</h3>
+                <div class="api-endpoint flex items-center justify-between flex-wrap gap-2">
+                    <div class="flex items-center">
+                        <label class="font-bold">API 端点</label>
+                        <div class="font-mono">{{ origin }}/v1</div>
+                    </div>
+                    <button @click="copyToClipboard(origin + '/v1')" class="text-[#67e8f9] hover:text-white text-xs transition">复制链接</button>
+                </div>
+                <div class="usage-steps">
+                    <p class="mb-2 font-bold text-[#d8b4fe]">在 SillyTavern / 酒馆中使用</p>
+                    <ol class="list-decimal list-inside space-y-1 text-sm">
+                        <li>打开连接设置 → Chat Completion</li>
+                        <li>选择 兼容OpenAI 或 Gemini/反代</li>
+                        <li>API 端点填写上方地址</li>
+                        <li>API Key 填写您的密钥</li>
+                        <li>模型: gemini-2.5-flash 或 gemini-2.5-pro</li>
+                    </ol>
+                </div>
             </div>
-          </div>
         </div>
     </div>
 
@@ -150,151 +197,38 @@
 
     <!-- Admin Tab -->
     <div v-else-if="currentTab === 'admin' && isAdmin" class="max-w-6xl mx-auto text-white">
-        <!-- Admin Stats Widgets -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            <!-- 1. Global Capacity -->
-            <div class="card p-5">
-                <div class="flex items-start justify-between mb-2">
-                    <div>
-                        <h4 class="text-[10px] font-black text-indigo-200 uppercase tracking-widest mb-1">全局算力负载</h4>
-                        <span class="text-xl font-bold">⚡ 综合负载</span>
-                    </div>
-                </div>
-                <div class="flex items-center gap-4">
-                    <div class="flex-1 transform scale-100">
-                        <GaugeChart 
-                            :current="adminStats.overview.global_usage" 
-                            :max="adminStats.overview.global_capacity || 1" 
-                            progressColor="#818cf8" 
-                            textColor="text-white" 
-                        />
-                    </div>
-                    <div class="flex flex-col gap-2 w-1/3">
-                        <div class="bg-black/20 rounded-lg p-1.5 text-center">
-                            <div class="text-[9px] text-white/50">Flash</div>
-                            <div class="text-[10px] font-bold">
-                                {{ adminStats.overview.model_usage?.flash || 0 }} <span class="opacity-50">/ {{ (adminStats.overview.capacities?.flash || 0) / 1000 }}k</span>
-                            </div>
-                        </div>
-                        <div class="bg-black/20 rounded-lg p-1.5 text-center">
-                            <div class="text-[9px] text-white/50">2.5 Pro</div>
-                            <div class="text-[10px] font-bold">
-                                {{ adminStats.overview.model_usage?.pro || 0 }} <span class="opacity-50">/ {{ adminStats.overview.capacities?.pro || 0 }}</span>
-                            </div>
-                        </div>
-                        <div class="bg-black/20 rounded-lg p-1.5 text-center border border-purple-500/30">
-                            <div class="text-[9px] text-purple-300">3.0 Pro</div>
-                            <div class="text-[10px] font-bold text-purple-200">
-                                {{ adminStats.overview.model_usage?.v3 || 0 }} <span class="opacity-50">/ {{ adminStats.overview.capacities?.v3 || 0 }}</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 2. Health Status -->
-            <div class="card p-5">
-                <div class="flex items-center justify-between mb-4">
-                    <h4 class="text-[10px] font-black text-emerald-200 uppercase tracking-widest">凭证健康度</h4>
-                </div>
-                <div class="flex flex-col items-center justify-center h-full pb-2">
-                    <div class="text-4xl font-black text-emerald-400 mb-1 drop-shadow-lg">{{ adminStats.overview.active_credentials }}</div>
-                    <div class="text-xs font-bold text-white/60 mb-3">活跃凭证</div>
-                    
-                    <div class="w-full bg-black/20 h-2 rounded-full overflow-hidden flex">
-                        <div class="bg-emerald-500 h-full transition-all duration-1000" :style="{ width: (adminStats.overview.active_credentials / (adminStats.overview.total_credentials || 1) * 100) + '%' }"></div>
-                        <div class="bg-rose-500 h-full transition-all duration-1000 flex-1"></div>
-                    </div>
-                    <div class="flex justify-between w-full mt-2 text-[9px] font-black text-white/30 uppercase">
-                        <span>{{ adminStats.overview.active_credentials }} Active</span>
-                        <span>{{ adminStats.overview.dead_credentials }} Dead</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 3. Top Users Leaderboard -->
-            <div class="card p-5 flex flex-col">
-                <div class="flex items-center justify-between mb-2">
-                    <h4 class="text-[10px] font-black text-amber-200 uppercase tracking-widest">Top 25 🏆</h4>
-                    <div class="flex gap-1">
-                        <button @click="leaderboardPage--" :disabled="leaderboardPage === 1" class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 text-[10px]">←</button>
-                        <span class="text-[10px] font-mono pt-1">{{ leaderboardPage }}/5</span>
-                        <button @click="leaderboardPage++" :disabled="leaderboardPage === 5" class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 text-[10px]">→</button>
-                    </div>
-                </div>
-                
-                <div class="flex-1 overflow-y-auto pr-1 custom-scrollbar">
-                    <div v-if="adminStats.leaderboard.length === 0" class="h-full flex items-center justify-center text-white/20 text-xs">
-                        暂无数据
-                    </div>
-                    <div v-else class="space-y-1.5">
-                        <div v-for="(user, idx) in visibleLeaderboard" :key="user.id" 
-                                class="flex justify-between items-center p-2 rounded-lg bg-black/10 border border-white/5 hover:bg-white/10 transition-colors">
-                            <div class="flex items-center gap-2">
-                                <div class="w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-black"
-                                    :class="{
-                                    'bg-yellow-400 text-yellow-900': ((leaderboardPage - 1) * 5 + idx) === 0,
-                                    'bg-gray-300 text-gray-900': ((leaderboardPage - 1) * 5 + idx) === 1,
-                                    'bg-orange-400 text-orange-900': ((leaderboardPage - 1) * 5 + idx) === 2,
-                                    'bg-white/10 text-white/50': ((leaderboardPage - 1) * 5 + idx) > 2
-                                    }">
-                                {{ (leaderboardPage - 1) * 5 + idx + 1 }}
-                                </div>
-                                <span class="text-xs font-bold text-white/90">{{ user.discordUsername || user.email }}</span>
-                            </div>
-                            <span class="text-[10px] font-mono text-indigo-300">{{ user.today_used }}</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 4. Antigravity Leaderboard -->
-            <div class="card p-5 flex flex-col">
-                <div class="flex items-center justify-between mb-2">
-                    <h4 class="text-[10px] font-black text-cyan-200 uppercase tracking-widest">反重力 Top 25 🚀</h4>
-                    <div class="flex gap-1">
-                        <button @click="agLeaderboardPage--" :disabled="agLeaderboardPage === 1" class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 text-[10px]">←</button>
-                        <span class="text-[10px] font-mono pt-1">{{ agLeaderboardPage }}/5</span>
-                        <button @click="agLeaderboardPage++" :disabled="agLeaderboardPage === 5" class="w-5 h-5 rounded bg-white/10 hover:bg-white/20 disabled:opacity-30 text-[10px]">→</button>
-                    </div>
-                </div>
-                
-                <div class="flex-1 overflow-y-auto pr-1 custom-scrollbar">
-                    <div v-if="agLeaderboard.length === 0" class="h-full flex items-center justify-center text-white/20 text-xs">
-                        暂无数据
-                    </div>
-                    <div v-else class="space-y-1.5">
-                        <div v-for="(user, idx) in visibleAgLeaderboard" :key="user.id" 
-                                class="flex justify-between items-center p-2 rounded-lg bg-black/10 border border-white/5 hover:bg-white/10 transition-colors">
-                            <div class="flex items-center gap-2">
-                                <div class="w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-black"
-                                    :class="{
-                                    'bg-yellow-400 text-yellow-900': ((agLeaderboardPage - 1) * 5 + idx) === 0,
-                                    'bg-gray-300 text-gray-900': ((agLeaderboardPage - 1) * 5 + idx) === 1,
-                                    'bg-orange-400 text-orange-900': ((agLeaderboardPage - 1) * 5 + idx) === 2,
-                                    'bg-white/10 text-white/50': ((agLeaderboardPage - 1) * 5 + idx) > 2
-                                    }">
-                                {{ (agLeaderboardPage - 1) * 5 + idx + 1 }}
-                                </div>
-                                <span class="text-xs font-bold text-white/90">{{ user.discordUsername || user.email }}</span>
-                            </div>
-                            <span class="text-[10px] font-mono text-cyan-300">{{ user.total }}</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+        <!-- Admin Stats Widgets - New 3-column layout -->
+        <AdminDashboardCards
+            :adminStats="adminStats"
+            :antigravityStats="{
+                usage: adminStats.overview.ag_usage || { requests: { claude: 0, gemini3: 0 }, tokens: { claude: 0, gemini3: 0 } },
+                capacity: adminStats.overview.ag_total || { requests: { claude: 0, gemini3: 0 }, tokens: { claude: 0, gemini3: 0 } },
+                leaderboard: agLeaderboard,
+                meta: adminStats.overview.ag_meta
+            }"
+            :antigravityTokenStats="agTokenStats"
+            :poolsOverview="poolsOverview"
+            @refresh="fetchStats"
+            @refresh-ag="refreshAgTokens"
+            class="mb-8"
+        />
 
         <!-- Admin Settings & Tables -->
         <div class="bg-white/5 backdrop-blur-xl border border-purple-500/30 rounded-[40px] p-1 shadow-[0_0_30px_rgba(139,92,246,0.15)] overflow-hidden">
-            <div class="flex gap-2 p-2 border-b border-white/5">
-                <button @click="adminTab = 'credentials'" class="px-6 py-3 rounded-full text-sm font-bold transition-all" :class="adminTab === 'credentials' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">🎫 凭证管理</button>
-                <button @click="adminTab = 'users'" class="px-6 py-3 rounded-full text-sm font-bold transition-all" :class="adminTab === 'users' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">👥 用户管理</button>
-                <button @click="adminTab = 'settings'" class="px-6 py-3 rounded-full text-sm font-bold transition-all" :class="adminTab === 'settings' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">⚙️ 系统设置</button>
+            <div class="flex gap-2 p-2 border-b border-white/5 overflow-x-auto">
+                <button @click="adminTab = 'credentials'" class="px-6 py-3 rounded-full text-sm font-bold transition-all whitespace-nowrap" :class="adminTab === 'credentials' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">🎫 凭证管理</button>
+                <button @click="adminTab = 'antigravity_tokens'" class="px-6 py-3 rounded-full text-sm font-bold transition-all whitespace-nowrap" :class="adminTab === 'antigravity_tokens' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">🚀 反重力凭证</button>
+                <button @click="adminTab = 'users'" class="px-6 py-3 rounded-full text-sm font-bold transition-all whitespace-nowrap" :class="adminTab === 'users' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">👥 用户管理</button>
+                <button @click="adminTab = 'quota'" class="px-6 py-3 rounded-full text-sm font-bold transition-all whitespace-nowrap" :class="adminTab === 'quota' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">⚖️ 用户配额</button>
+                <button @click="adminTab = 'announcement'" class="px-6 py-3 rounded-full text-sm font-bold transition-all whitespace-nowrap" :class="adminTab === 'announcement' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">📢 公告管理</button>
+                <button @click="adminTab = 'settings'" class="px-6 py-3 rounded-full text-sm font-bold transition-all whitespace-nowrap" :class="adminTab === 'settings' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">⚙️ 系统设置</button>
             </div>
             <div class="p-4 text-white">
                 <AdminCredentialTable v-if="adminTab === 'credentials'" />
+                <AdminAntigravityTokens v-if="adminTab === 'antigravity_tokens'" />
                 <AdminUserTable v-if="adminTab === 'users'" />
+                <AdminQuotaSettings v-if="adminTab === 'quota'" @saved="fetchStats" />
+                <AdminAnnouncement v-if="adminTab === 'announcement'" />
                 <div v-if="adminTab === 'settings'">
                     <AdminSettings class="mb-6" />
                 </div>
@@ -339,6 +273,14 @@
         </div>
     </div>
 
+    <!-- Announcement Modal (Reused for manual open) -->
+    <AnnouncementModal 
+        :show="showAnnouncementModal" 
+        :content="announcementData.content" 
+        :forceRead="false"
+        @close="showAnnouncementModal = false" 
+    />
+
   </MainLayout>
 </template>
 
@@ -348,14 +290,18 @@ import { useRouter } from 'vue-router';
 import { api } from '@/utils/api';
 import MainLayout from '../layouts/MainLayout.vue';
 import AnnouncementCard from '../components/Dashboard/AnnouncementCard.vue';
+import AnnouncementModal from '../components/AnnouncementModal.vue';
 import UsageCard from '../components/Dashboard/UsageCard.vue';
 import AntiGravityCard from '../components/Dashboard/AntiGravityCard.vue';
 import AntigravityView from '../components/AntigravityView.vue';
 import AdminCredentialTable from '../components/AdminCredentialTable.vue';
 import AdminUserTable from '../components/AdminUserTable.vue';
 import AdminQuotaSettings from '../components/AdminQuotaSettings.vue';
+import AdminAntigravityTokens from '../components/AdminAntigravityTokens.vue';
+import AdminAnnouncement from '../components/AdminAnnouncement.vue';
 import AdminSettings from '../components/AdminSettings.vue';
 import GaugeChart from '../components/GaugeChart.vue';
+import AdminDashboardCards from '../components/Dashboard/AdminDashboardCards.vue';
 
 const router = useRouter();
 const currentTab = ref('home');
@@ -383,8 +329,10 @@ const adminStats = ref({
   leaderboard: [] as any[]
 });
 const agLeaderboard = ref<any[]>([]);
+const agTokenStats = ref<any>(null);
 const leaderboardPage = ref(1);
 const agLeaderboardPage = ref(1);
+const poolsOverview = ref<any>(null);
 
 // Upload State
 const uploadContent = ref('');
@@ -392,14 +340,17 @@ const isUploading = ref(false);
 const isCheckingRaw = ref(false);
 const filesToUpload = ref<File[]>([]);
 const visibleLimit = ref(5);
+const isUploadExpanded = ref(true);
 
 // Modals
 const showChangePwModal = ref(false);
 const showCreateModal = ref(false);
+const showAnnouncementModal = ref(false);
 const pwOld = ref('');
 const pwNew = ref('');
 const newKeyName = ref('');
 const newKeyIsAdmin = ref(false);
+const origin = ref(window.location.origin);
 
 // Computed
 const userTitle = computed(() => {
@@ -448,11 +399,22 @@ const fetchStats = async () => {
             // Merge a minimal AG usage widget into adminStats.overview without impacting Cloud Code stats
             adminStats.value.overview = {
                 ...adminStats.value.overview,
-                ag_usage: ag.data.global_usage || { claude: 0, gemini3: 0 },
-                ag_total: ag.data.global_capacity || { claude: 0, gemini3: 0 }
+                ag_usage: ag.data.usage || { requests: { claude: 0, gemini3: 0 }, tokens: { claude: 0, gemini3: 0 } },
+                ag_total: ag.data.capacity || { requests: { claude: 0, gemini3: 0 }, tokens: { claude: 0, gemini3: 0 } },
+                ag_meta: ag.data.meta
             };
             // Get Antigravity Leaderboard
             agLeaderboard.value = ag.data.leaderboard || [];
+            agTokenStats.value = ag.data.token_stats || null;
+            
+            // Fetch pools overview
+            try {
+                const poolsRes = await api.get('/antigravity/pools/overview');
+                poolsOverview.value = poolsRes.data;
+            } catch (poolsError) {
+                console.error('Failed to fetch pools overview:', poolsError);
+                poolsOverview.value = null;
+            }
         } catch {}
     }
 
@@ -461,6 +423,10 @@ const fetchStats = async () => {
 
     const resCreds = await api.get('/credentials');
     myCredentials.value = resCreds.data;
+    // Auto-collapse upload section if user has credentials
+    if (myCredentials.value.length > 0) {
+        isUploadExpanded.value = false;
+    }
     
     const resAnnounce = await api.get('/announcement');
     announcementData.value = resAnnounce.data;
@@ -474,6 +440,10 @@ const logout = () => {
     sessionStorage.removeItem('token');
     localStorage.removeItem('token');
     router.push('/login');
+};
+
+const openAnnouncementModal = () => {
+    showAnnouncementModal.value = true;
 };
 
 const changePassword = async () => {
@@ -556,10 +526,15 @@ const handleUpload = async () => {
     
     if (failCount > 0 && successCount === 0) {
         // 全部失败，显示详细错误
-        alert(`上传失败\n\n${lastError}`);
+        alert(`上传失败
+
+${lastError}`);
     } else if (failCount > 0) {
         // 部分失败
-        alert(`上传完成: 成功 ${successCount} 个, 失败 ${failCount} 个\n\n最后一个错误:\n${lastError}`);
+        alert(`上传完成: 成功 ${successCount} 个, 失败 ${failCount} 个
+
+最后一个错误:
+${lastError}`);
     } else {
         // 全部成功
         alert(`🎉 上传成功！共 ${successCount} 个凭证`);
@@ -650,7 +625,7 @@ const bindDiscordApp = async () => {
         const ua = navigator.userAgent.toLowerCase();
         const isAndroid = ua.includes('android');
         if (isAndroid) {
-            const noSchema = url.replace(/^https?:\/\//, '');
+            const noSchema = url.replace(new RegExp('^https?://'), '');
             const intent = `intent://${noSchema}#Intent;scheme=https;package=com.discord;S.browser_fallback_url=${encodeURIComponent(url)};end`;
             location.href = intent;
             setTimeout(() => { location.href = url; }, 1200);
@@ -660,6 +635,17 @@ const bindDiscordApp = async () => {
     } catch (e: any) {
         console.error('bindDiscordApp error', e);
         alert(e.response?.data?.error || e.message);
+    }
+};
+
+const refreshAgTokens = async () => {
+    if (!confirm('确定要刷新所有反重力凭证吗？这可能需要一些时间。')) return;
+    try {
+        await api.post('/antigravity/refresh-all');
+        alert('刷新请求已提交');
+        fetchStats();
+    } catch (e: any) {
+        alert('刷新失败: ' + (e.response?.data?.error || e.message));
     }
 };
 
@@ -706,5 +692,123 @@ watch(currentTab, () => {
     transform: translateY(-4px);
     box-shadow: 0 10px 20px -3px rgba(0, 0, 0, 0.2);
     border-color: rgba(255, 255, 255, 0.1);
+}
+
+.ag-card-style {
+    background: linear-gradient(135deg, #3a2270, #2d1b5a);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(139, 92, 246, 0.2);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* Key Management Page Styles */
+.key-management-page {
+  background-color: #121029;
+  padding: 16px;
+  border-radius: 16px; /* Added radius to blend better if it has background */
+}
+
+.api-key-card {
+  background: linear-gradient(135deg, #3a2270, #2d1b5a);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transition: transform 0.2s;
+}
+
+.api-key-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(139, 92, 246, 0.4);
+}
+
+.api-key-text {
+  background-color: #1e1b4b;
+  color: #d8b4fe;
+  padding: 12px 16px;
+  border-radius: 6px;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  margin-bottom: 16px;
+  font-size: 14px;
+  word-break: break-all;
+}
+
+.key-btn-group {
+  margin-bottom: 0;
+}
+
+.copy-btn {
+  background: linear-gradient(90deg, #8b5cf6, #7c3aed);
+  color: #ffffff;
+  padding: 8px 20px;
+  border-radius: 6px;
+  border: none;
+  margin-right: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.4);
+}
+
+.copy-btn:hover {
+  background: linear-gradient(90deg, #a78bfa, #8b5cf6);
+  box-shadow: 0 0 12px rgba(139, 92, 246, 0.6);
+  transform: translateY(-1px);
+}
+
+.change-btn {
+  background: linear-gradient(90deg, #67e8f9, #06b6d4);
+  color: #ffffff;
+  padding: 8px 20px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 0 8px rgba(103, 232, 249, 0.4);
+}
+
+.change-btn:hover {
+  background: linear-gradient(90deg, #99f6e4, #67e8f9);
+  box-shadow: 0 0 12px rgba(103, 232, 249, 0.6);
+  transform: translateY(-1px);
+}
+
+.usage-guide {
+  border-top: 1px solid rgba(139, 92, 246, 0.2);
+  padding-top: 16px;
+  color: #a78bfa;
+}
+
+.usage-guide h3 {
+  color: #d8b4fe;
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.api-endpoint {
+  background-color: #1e1b4b;
+  padding: 10px 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  margin-bottom: 12px;
+}
+
+.api-endpoint label {
+  margin-right: 8px;
+  color: #a78bfa;
+}
+
+.api-endpoint div {
+  color: #67e8f9;
+  font-family: monospace;
+}
+
+.usage-steps ol {
+  padding-left: 20px;
+  line-height: 1.7;
+}
+
+.usage-steps li {
+  margin-bottom: 6px;
 }
 </style>

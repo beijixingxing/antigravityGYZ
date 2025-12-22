@@ -73,16 +73,25 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   const DEFAULT_SYSTEM_CONFIG = {
     enable_registration: true,
     quota: {
-      newbie: 300,
-      contributor: 1500,
-      v3_contributor: 3000,
-      increment_per_credential: 1000
+      newbie: {
+        base: { flash: 300, pro: 0, v3: 0 },
+        increment: { flash: 0, pro: 0, v3: 0 }
+      },
+      contributor: {
+        base: { flash: 1500, pro: 100, v3: 0 },
+        increment: { flash: 1000, pro: 50, v3: 0 }
+      },
+      v3_contributor: {
+        base: { flash: 3000, pro: 200, v3: 50 },
+        increment: { flash: 1500, pro: 100, v3: 20 }
+      }
     },
     rate_limit: {
       newbie: 10,
       contributor: 60,
       v3_contributor: 120
-    }
+    },
+    strict_quota_mode: false
   };
 
   // --- User Dashboard Routes ---
@@ -130,13 +139,42 @@ export default async function adminRoutes(fastify: FastifyInstance) {
 
     // Dynamic Quota Calculation
     const activeCredCount = user._count.credentials;
-    const quotaConf = systemConfig.quota || {};
-    let baseQuota = quotaConf.newbie ?? 300;
-    if (v3Count > 0) baseQuota = quotaConf.v3_contributor ?? 3000;
-    else if (activeCredCount > 0) baseQuota = quotaConf.contributor ?? 1500;
-    const inc = quotaConf.increment_per_credential ?? 1000;
-    const extra = Math.max(0, activeCredCount - 1) * inc;
-    const totalQuota = baseQuota + extra;
+    const quotaConf = systemConfig.quota || DEFAULT_SYSTEM_CONFIG.quota;
+
+    let level: 'newbie' | 'contributor' | 'v3_contributor' = 'newbie';
+    if (v3Count > 0) level = 'v3_contributor';
+    else if (activeCredCount > 0) level = 'contributor';
+
+    const levelConfig = quotaConf[level];
+    const baseQuotas = levelConfig.base;
+    const incQuotas = levelConfig.increment || { flash: 0, pro: 0, v3: 0 };
+
+    let totalQuotas = { flash: 0, pro: 0, v3: 0 };
+
+    const isStrictQuota = !!(systemConfig as any).strict_quota_mode;
+
+    if (isStrictQuota && level === 'v3_contributor') {
+        // Strict Mode Logic for V3 Users
+        const normalCount = Math.max(0, activeCredCount - v3Count);
+        const extraV3 = Math.max(0, v3Count - 1);
+        const extraNormal = normalCount;
+
+        const contributorInc = quotaConf['contributor'].increment || { flash: 0, pro: 0, v3: 0 };
+
+        totalQuotas = {
+            flash: (baseQuotas.flash || 0) + extraV3 * (incQuotas.flash || 0) + extraNormal * (contributorInc.flash || 0),
+            pro: (baseQuotas.pro || 0) + extraV3 * (incQuotas.pro || 0) + extraNormal * (contributorInc.pro || 0),
+            v3: (baseQuotas.v3 || 0) + extraV3 * (incQuotas.v3 || 0) + extraNormal * (contributorInc.v3 || 0)
+        };
+    } else {
+        // Standard Logic
+        const extraCreds = (level === 'newbie') ? 0 : Math.max(0, activeCredCount - 1);
+        totalQuotas = {
+            flash: (baseQuotas.flash || 0) + extraCreds * (incQuotas.flash || 0),
+            pro: (baseQuotas.pro || 0) + extraCreds * (incQuotas.pro || 0),
+            v3: (baseQuotas.v3 || 0) + extraCreds * (incQuotas.v3 || 0)
+        };
+    }
 
     // Fetch Redis Model Stats (使用 UTC+8 时区，与 today_used 重置时间一致)
     const now = new Date();
@@ -180,13 +218,18 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     const effectiveAgClaudeLimit = userAgClaudeOverride > 0 ? userAgClaudeOverride : computedClaudeLimit;
     const effectiveAgGemini3Limit = userAgGemini3Override > 0 ? userAgGemini3Override : computedGemini3Limit;
 
+    const agRateLimitBase = agConfig.rate_limit ?? 30;
+    const agRateLimitInc = agConfig.rate_limit_increment ?? 30;
+    const effectiveAgRateLimit = (userAgTokenCount > 0) ? agRateLimitInc : agRateLimitBase;
+
     let agUsage: any = {
       claude: 0,
       gemini3: 0,
       limits: { claude: effectiveAgClaudeLimit, gemini3: effectiveAgGemini3Limit },
       requests: { claude: 0, gemini3: 0 },
       tokens: { claude: 0, gemini3: 0 },
-      use_token_quota: useTokenQuota
+      use_token_quota: useTokenQuota,
+      rate_limit: effectiveAgRateLimit
     };
     try {
       const claudeReqKey = `USAGE:requests:${todayStr}:${userId}:antigravity:claude`;
@@ -242,6 +285,11 @@ export default async function adminRoutes(fastify: FastifyInstance) {
       time: a.created_at
     }));
 
+    const rateConf = systemConfig.rate_limit || DEFAULT_SYSTEM_CONFIG.rate_limit;
+    let rateLimit = rateConf.newbie || 10;
+    if (level === 'v3_contributor') rateLimit = rateConf.v3_contributor || 120;
+    else if (level === 'contributor') rateLimit = rateConf.contributor || 60;
+
     return {
       id: user.id,
       email: user.email,
@@ -250,7 +298,8 @@ export default async function adminRoutes(fastify: FastifyInstance) {
       discordId: (user as any).discordId || null,
       discordUsername: (user as any).discordUsername || null,
       discordAvatar: (user as any).discordAvatar || null,
-      daily_limit: totalQuota, // Dynamic limit
+      daily_limit: totalQuotas, // Dynamic limit for each model
+      rate_limit: rateLimit,
       today_used: user.today_used,
       model_usage: modelUsage,
       antigravity_usage: agUsage,
@@ -669,7 +718,8 @@ export default async function adminRoutes(fastify: FastifyInstance) {
         config = {
           enable_registration: parsed.enable_registration ?? config.enable_registration,
           quota: { ...config.quota, ...parsed.quota },
-          rate_limit: { ...config.rate_limit, ...parsed.rate_limit }
+          rate_limit: { ...config.rate_limit, ...parsed.rate_limit },
+          strict_quota_mode: parsed.strict_quota_mode ?? config.strict_quota_mode
         };
       } catch (e) { }
     }
