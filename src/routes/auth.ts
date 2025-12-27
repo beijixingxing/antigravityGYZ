@@ -45,14 +45,15 @@ export default async function authRoutes(fastify: FastifyInstance) {
     // Fetch System Config
     const configSetting = await prisma.systemSetting.findUnique({ where: { key: 'SYSTEM_CONFIG' } });
     let enableReg = true;
-    let defaultQuota = 300;
-    if (configSetting) {
-      try {
-        const conf = JSON.parse(configSetting.value);
-        enableReg = conf.enable_registration ?? true;
-        defaultQuota = conf.quota?.newbie ?? 300;
-      } catch (e) { }
-    }
+  let defaultQuota = 300;
+  if (configSetting) {
+    try {
+      const conf = JSON.parse(configSetting.value);
+      enableReg = conf.enable_registration ?? true;
+      // 确保defaultQuota始终为整数
+      defaultQuota = parseInt(conf.quota?.newbie ?? '300', 10) || 300;
+    } catch (e) { }
+  }
 
     if (!enableReg) return reply.code(400).send({ error: 'New user registration is currently disabled.' });
 
@@ -157,7 +158,8 @@ export default async function authRoutes(fastify: FastifyInstance) {
             if (configSetting) {
               try {
                 const conf = JSON.parse(configSetting.value);
-                defaultQuota = conf.quota?.newbie ?? 300;
+                // 确保defaultQuota始终为整数
+                defaultQuota = parseInt(conf.quota?.newbie ?? '300', 10) || 300;
               } catch (e) { }
             }
             const rand = crypto.randomBytes(24).toString('hex');
