@@ -70,7 +70,8 @@ function getAvailableModels() {
     const cloudCodeModels = [
         ...withStreamVariants('gemini-2.5-flash'),
         ...withStreamVariants('gemini-2.5-pro'),
-        ...withStreamVariants('gemini-3-pro-preview'),
+        // Disabled: gemini-3-pro-preview (CLI)
+        // ...withStreamVariants('gemini-3-pro-preview'),
         ...withStreamVariants('gemini-3-pro-high'),
         ...withStreamVariants('gemini-3-pro-low'),
         ...withStreamVariants('gemini-3-flash-preview'),
@@ -479,6 +480,7 @@ export class ProxyController {
         let gemini3TokenQuota = 200000;
         let agRateLimit = 30; // 反重力渠道每分钟请求限制
         let agRateLimitIncrement = 0;
+        let poolRoundRobin = true;
         let config: any = {};
 
         try {
@@ -492,6 +494,7 @@ export class ProxyController {
                 gemini3TokenQuota = config.gemini3_token_quota ?? 200000;
                 agRateLimit = config.rate_limit ?? 30;
                 agRateLimitIncrement = config.rate_limit_increment ?? 0;
+                poolRoundRobin = config.pool_round_robin ?? true;
             }
         } catch (e) {
             console.error('Failed to load ANTIGRAVITY_CONFIG', e);
@@ -583,7 +586,7 @@ export class ProxyController {
 
         // 获取 Antigravity Token (从公共池，按用户锁定避免跨用户并发共享)
         const initialTtl = isStreaming ? 60000 : 30000;
-        const token = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3', modelId: actualModelId }, user.id, initialTtl);
+        const token = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3', modelId: actualModelId, poolRoundRobin }, user.id, initialTtl);
         if (!token) {
             return reply.code(503).send({
                 error: { message: '没有可用的反重力渠道 Token，请联系管理员添加', type: 'service_unavailable' }
@@ -726,7 +729,7 @@ export class ProxyController {
                             } catch { }
                             try { await antigravityTokenManager.markAsCooling(currentToken.id, cooldownMs); } catch { }
                             await antigravityTokenManager.releaseLock(currentToken.id, user.id);
-                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3' }, user.id, 60000);
+                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3', poolRoundRobin }, user.id, 60000);
                             if (!next) throw err;
                             currentToken = next;
                             attempts++;
@@ -734,14 +737,14 @@ export class ProxyController {
                         } else if (status === 403) {
                             try { await antigravityTokenManager.markAsDead(currentToken.id); } catch { }
                             await antigravityTokenManager.releaseLock(currentToken.id, user.id);
-                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3' }, user.id, 60000);
+                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3', poolRoundRobin }, user.id, 60000);
                             if (!next) throw err;
                             currentToken = next;
                             attempts++;
                             continue;
                         } else if (status === 500) {
                             await antigravityTokenManager.releaseLock(currentToken.id, user.id);
-                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3' }, user.id, 60000);
+                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3', poolRoundRobin }, user.id, 60000);
                             if (!next) throw err;
                             currentToken = next;
                             attempts++;
@@ -825,7 +828,7 @@ export class ProxyController {
                             } catch { }
                             try { await antigravityTokenManager.markAsCooling(currentToken2.id, cooldownMs); } catch { }
                             await antigravityTokenManager.releaseLock(currentToken2.id, user.id);
-                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3' }, user.id, 30000);
+                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3', poolRoundRobin }, user.id, 30000);
                             if (!next) throw err;
                             currentToken2 = next;
                             attempts2++;
@@ -833,14 +836,14 @@ export class ProxyController {
                         } else if (status === 403) {
                             try { await antigravityTokenManager.markAsDead(currentToken2.id); } catch { }
                             await antigravityTokenManager.releaseLock(currentToken2.id, user.id);
-                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3' }, user.id, 30000);
+                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3', poolRoundRobin }, user.id, 30000);
                             if (!next) throw err;
                             currentToken2 = next;
                             attempts2++;
                             continue;
                         } else if (status === 500) {
                             await antigravityTokenManager.releaseLock(currentToken2.id, user.id);
-                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3' }, user.id, 30000);
+                            const next = await antigravityTokenManager.getToken({ group: group as 'claude' | 'gemini3', poolRoundRobin }, user.id, 30000);
                             if (!next) throw err;
                             currentToken2 = next;
                             attempts2++;

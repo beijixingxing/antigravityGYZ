@@ -11,6 +11,13 @@ import { redis } from '../utils/redis';
 
 const prisma = new PrismaClient();
 const AG_LOCK_PREFIX = 'CRED_LOCK:AG:'; // 反重力凭证锁的 Redis 键前缀
+const isGeminiQuotaModel = (id: string) => id === 'gemini-3-pro-low' || id === 'gemini-3-pro-high';
+const isClaudeQuotaModel = (id: string) =>
+    id === 'claude-opus-4-5-thinking' ||
+    id.startsWith('claude-opus-4-5-thinking-') ||
+    id === 'claude-sonnet-4-5' ||
+    id === 'claude-sonnet-4-5-thinking' ||
+    id.startsWith('claude-sonnet-4-5-thinking-');
 
 /**
  * 反重力令牌管理器类
@@ -208,7 +215,7 @@ export class AntigravityTokenManager {
      * @param ttlMs 锁的过期时间（毫秒）
      * @returns 反重力令牌数据，或 null（如果没有可用令牌）
      */
-    async getToken(opts?: { group?: 'claude' | 'gemini3', modelId?: string }, userId?: number, ttlMs: number = 30000): Promise<AntigravityTokenData | null> {
+    async getToken(opts?: { group?: 'claude' | 'gemini3', modelId?: string; poolRoundRobin?: boolean }, userId?: number, ttlMs: number = 30000): Promise<AntigravityTokenData | null> {
         const now = new Date();
         const minInterval = 2000; // 同一 Token 最少间隔 2 秒
 
@@ -263,11 +270,11 @@ export class AntigravityTokenManager {
                 if (!x.q) return undefined;
                 const pm = x.q.per_model || [];
                 if (opts?.group === 'gemini3') {
-                    const arr = pm.map(p => p.model_id.includes('gemini-3') ? (typeof p.remaining === 'number' ? p.remaining : null) : null)
+                    const arr = pm.map(p => isGeminiQuotaModel(p.model_id) ? (typeof p.remaining === 'number' ? p.remaining : null) : null)
                         .filter((v): v is number => typeof v === 'number');
                     return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : (typeof x.q.remaining === 'number' ? x.q.remaining : undefined);
                 } else if (opts?.group === 'claude') {
-                    const arr = pm.map(p => p.model_id.includes('claude') ? (typeof p.remaining === 'number' ? p.remaining : null) : null)
+                    const arr = pm.map(p => isClaudeQuotaModel(p.model_id) ? (typeof p.remaining === 'number' ? p.remaining : null) : null)
                         .filter((v): v is number => typeof v === 'number');
                     return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : (typeof x.q.remaining === 'number' ? x.q.remaining : undefined);
                 }
@@ -276,18 +283,19 @@ export class AntigravityTokenManager {
             if (vals.length === 0) return 1;
             return vals.reduce((a, b) => a + b, 0) / vals.length;
         })();
-        const candidates = avgRemainingNormal <= 0.10 ? withQuota : normals;
+        const poolRoundRobin = opts?.poolRoundRobin !== false;
+        const candidates = poolRoundRobin ? (avgRemainingNormal <= 0.10 ? withQuota : normals) : withQuota;
         const sorted = candidates
             .map(x => {
                 let remaining = 0.5;
                 if (x.q) {
                     const pm = x.q.per_model || [];
                     if (opts?.group === 'gemini3') {
-                        const arr = pm.map(p => p.model_id.includes('gemini-3') ? (typeof p.remaining === 'number' ? p.remaining : null) : null)
+                        const arr = pm.map(p => isGeminiQuotaModel(p.model_id) ? (typeof p.remaining === 'number' ? p.remaining : null) : null)
                             .filter((v): v is number => typeof v === 'number');
                         remaining = arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : (typeof x.q.remaining === 'number' ? x.q.remaining : 0.5);
                     } else if (opts?.group === 'claude') {
-                        const arr = pm.map(p => p.model_id.includes('claude') ? (typeof p.remaining === 'number' ? p.remaining : null) : null)
+                        const arr = pm.map(p => isClaudeQuotaModel(p.model_id) ? (typeof p.remaining === 'number' ? p.remaining : null) : null)
                             .filter((v): v is number => typeof v === 'number');
                         remaining = arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : (typeof x.q.remaining === 'number' ? x.q.remaining : 0.5);
                     } else {

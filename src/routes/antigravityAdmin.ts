@@ -103,7 +103,7 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
         if (!await verifyAdmin(req, reply)) return;
 
         const setting = await prisma.systemSetting.findUnique({ where: { key: 'ANTIGRAVITY_CONFIG' } });
-        let config = { claude_limit: 100, gemini3_limit: 200, rate_limit: 30, rate_limit_increment: 0 };
+        let config = { claude_limit: 100, gemini3_limit: 200, rate_limit: 30, rate_limit_increment: 0, pool_round_robin: true };
 
         if (setting) {
             try {
@@ -150,7 +150,8 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
             claude_limit, gemini3_limit, rate_limit, rate_limit_increment,
             increment_per_token_claude, increment_per_token_gemini3,
             use_token_quota, claude_token_quota, gemini3_token_quota,
-            increment_token_per_token_claude, increment_token_per_token_gemini3
+            increment_token_per_token_claude, increment_token_per_token_gemini3,
+            pool_round_robin
         } = req.body as any;
 
         // Validation (basic)
@@ -172,7 +173,8 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
             claude_token_quota: typeof claude_token_quota === 'number' ? claude_token_quota : 100000,
             gemini3_token_quota: typeof gemini3_token_quota === 'number' ? gemini3_token_quota : 200000,
             increment_token_per_token_claude: typeof increment_token_per_token_claude === 'number' ? increment_token_per_token_claude : 0,
-            increment_token_per_token_gemini3: typeof increment_token_per_token_gemini3 === 'number' ? increment_token_per_token_gemini3 : 0
+            increment_token_per_token_gemini3: typeof increment_token_per_token_gemini3 === 'number' ? increment_token_per_token_gemini3 : 0,
+            pool_round_robin: typeof pool_round_robin === 'boolean' ? pool_round_robin : true
         };
 
         await prisma.systemSetting.upsert({
@@ -361,11 +363,19 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
         const stats = { ...baseStats, inactive, personal_max_usage: personalMax, total_capacity: totalCapacity };
 
         // enrich tokens with quota cache classification and remaining
+        const { antigravityQuotaCache } = await import('../services/AntigravityQuotaCache');
         const enriched = await Promise.all(tokens.map(async (t: any) => {
-            const cached = (await import('../services/AntigravityQuotaCache')).antigravityQuotaCache.get(t.id);
+            let cached = antigravityQuotaCache.get(t.id);
+            if (!cached) {
+                try { cached = await antigravityQuotaCache.getFromRedis(t.id); } catch { }
+            }
+            let classification = cached?.classification || null;
+            if (!classification) {
+                classification = await antigravityQuotaCache.getPersistentClassification(t.id);
+            }
             return {
                 ...t,
-                classification: cached?.classification || null,
+                classification,
                 remaining: typeof cached?.remaining === 'number' ? cached?.remaining : null,
                 window_hours: typeof cached?.window_hours === 'number' ? cached?.window_hours : null
             };
@@ -531,7 +541,7 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
             try {
                 // ensure access token is fresh before quota pull
                 try { await antigravityTokenManager.refreshToken(t.id); } catch {}
-                const quota = await antigravityQuotaCache.refreshToken(tokenData);
+                const quota = await antigravityQuotaCache.refreshToken(tokenData, { waitForRateLimit: true });
                 refreshed++;
                 const cls = quota?.classification;
                 if (cls === 'Pro') pro++;
@@ -593,7 +603,7 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
             try {
                 // refresh access token first to reduce quota failures
                 try { await antigravityTokenManager.refreshToken(t.id); } catch {}
-                const quota = await antigravityQuotaCache.refreshToken(tokenData);
+                const quota = await antigravityQuotaCache.refreshToken(tokenData, { waitForRateLimit: true });
                 classification = quota?.classification || null;
             } catch (e: any) {
                 resultStatus = 'error';
@@ -637,12 +647,16 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
             if (!c) {
                 try { c = await antigravityQuotaCache.getFromRedis(t.id); } catch {}
             }
-            if (c?.classification === 'Pro') {
+            let classification = c?.classification || null;
+            if (!classification) {
+                classification = await antigravityQuotaCache.getPersistentClassification(t.id);
+            }
+            if (classification === 'Pro') {
                 pro++;
-                if (typeof c.remaining === 'number') proVals.push(c.remaining);
-            } else if (c?.classification === 'Normal') {
+                if (typeof c?.remaining === 'number') proVals.push(c.remaining);
+            } else if (classification === 'Normal') {
                 normal++;
-                if (typeof c.remaining === 'number') normalVals.push(c.remaining);
+                if (typeof c?.remaining === 'number') normalVals.push(c.remaining);
             } else {
                 unknown++;
             }

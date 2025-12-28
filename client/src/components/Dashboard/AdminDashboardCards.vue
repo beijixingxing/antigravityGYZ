@@ -30,6 +30,24 @@
                   平均剩余：{{ formatRemainingPercent(poolsOverview?.remaining?.pro_avg) }}
                 </div>
               </div>
+              <div class="pool-card">
+                <div class="pool-label">冷却中凭证</div>
+                <div class="pool-value">
+                  <CountUp :to="poolsOverview?.counts?.cooling || 0" />
+                </div>
+                <div class="pool-subtext">
+                  状态：Cooling
+                </div>
+              </div>
+              <div class="pool-card">
+                <div class="pool-label">未分类凭证</div>
+                <div class="pool-value">
+                  <CountUp :to="poolsOverview?.counts?.unknown || 0" />
+                </div>
+                <div class="pool-subtext">
+                  待判定 Normal/Pro
+                </div>
+              </div>
             </div>
           </div>
 

@@ -20,6 +20,10 @@ type TokenQuotaSummary = {
   fetched_at: number;
 };
 
+type RefreshOptions = {
+  waitForRateLimit?: boolean;
+};
+
 class AntigravityQuotaCache {
   private cache = new Map<number, TokenQuotaSummary>();
   private ttlMs = 15 * 60 * 1000;
@@ -47,6 +51,19 @@ class AntigravityQuotaCache {
         await redis.expire(this.rateKey, 60);
       }
       return n <= limit;
+    } catch {
+      return true;
+    }
+  }
+  private async waitForRateSlot(): Promise<boolean> {
+    try {
+      while (true) {
+        const ok = await this.withinRate();
+        if (ok) return true;
+        const ttl = await redis.ttl(this.rateKey);
+        const waitMs = (ttl && ttl > 0 ? ttl + 1 : 1) * 1000;
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+      }
     } catch {
       return true;
     }
@@ -171,7 +188,7 @@ class AntigravityQuotaCache {
     }
   }
 
-  async refreshToken(token: AntigravityTokenData): Promise<TokenQuotaSummary | null> {
+  async refreshToken(token: AntigravityTokenData, opts: RefreshOptions = {}): Promise<TokenQuotaSummary | null> {
     const locked = await this.acquireFetchLock(token.id, 15000); // Reduced lock time for faster concurrent refresh
     if (!locked) {
       const existing = await this.readRedisCache(token.id);
@@ -183,7 +200,7 @@ class AntigravityQuotaCache {
     }
 
     try {
-      const ok = await this.withinRate();
+      const ok = opts.waitForRateLimit ? await this.waitForRateSlot() : await this.withinRate();
       if (!ok) {
         const existing = await this.readRedisCache(token.id);
         if (existing) {
@@ -202,11 +219,22 @@ class AntigravityQuotaCache {
         window_seconds: typeof q?.windowSeconds === 'number' ? q.windowSeconds : null
       }));
       
-      // 使用工具函数提取和计算
-      // 只计入 Claude/Gemini 相关模型的额度
-      const mainModels = per.filter(p => /claude|gemini/i.test(p.model_id));
-      const vals = mainModels.map(p => p.remaining).filter((v): v is number => typeof v === 'number');
-      let remaining = vals.length ? Math.min(1, Math.max(...vals)) : null; // 取最大值并截断到 100%
+      // Only count shared quota models once (Gemini 3 Pro low/high, Claude shared models).
+      const isGeminiQuotaModel = (id: string) => id === 'gemini-3-pro-low' || id === 'gemini-3-pro-high';
+      const isClaudeQuotaModel = (id: string) =>
+        id === 'claude-opus-4-5-thinking' ||
+        id.startsWith('claude-opus-4-5-thinking-') ||
+        id === 'claude-sonnet-4-5' ||
+        id === 'claude-sonnet-4-5-thinking' ||
+        id.startsWith('claude-sonnet-4-5-thinking-');
+      const pickGroupRemaining = (items: PerModelQuota[]) => {
+        const vals = items.map(p => p.remaining).filter((v): v is number => typeof v === 'number');
+        return vals.length ? Math.min(1, Math.max(...vals)) : null;
+      };
+      const geminiRemaining = pickGroupRemaining(per.filter(p => isGeminiQuotaModel(p.model_id)));
+      const claudeRemaining = pickGroupRemaining(per.filter(p => isClaudeQuotaModel(p.model_id)));
+      const groupVals = [geminiRemaining, claudeRemaining].filter((v): v is number => typeof v === 'number');
+      let remaining = groupVals.length ? Math.min(1, groupVals.reduce((a, b) => a + b, 0) / groupVals.length) : null;
       
       // 从 reset_time 提取小时数
       const hoursFromReset = extractNumbersFromObjects(per, p => 
@@ -334,6 +362,14 @@ class AntigravityQuotaCache {
       this.cache.set(tokenId, obj);
       return obj;
     }
+    return null;
+  }
+
+  async getPersistentClassification(tokenId: number): Promise<'Normal' | 'Pro' | null> {
+    try {
+      const cls = await redis.get(`AG_CLASS:${tokenId}`);
+      if (cls === 'Normal' || cls === 'Pro') return cls;
+    } catch { }
     return null;
   }
 }
