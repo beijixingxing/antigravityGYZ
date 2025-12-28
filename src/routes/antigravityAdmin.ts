@@ -705,13 +705,16 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
                 session_id: generateSessionId()
             };
             const cached = (await import('../services/AntigravityQuotaCache')).antigravityQuotaCache.get(tokenId);
+            const cachedHasQuota = !!cached?.per_model?.some(pm =>
+                typeof pm.remaining === 'number' || !!pm.reset_time || typeof pm.window_seconds === 'number'
+            );
             const nowTs = Date.now();
             const minIntervalMs = 30000;
             const lastTs = lastQuotaPull.get(tokenId) || 0;
             let quotas: Record<string, any> | null = null;
             let from_cache = false;
             // use cache unless force or cache missing
-            if (cached && !force) {
+            if (cached && !force && cachedHasQuota) {
                 quotas = Object.fromEntries(cached.per_model.map(pm => [pm.model_id, {
                     remaining: pm.remaining,
                     resetTime: pm.reset_time,
@@ -721,7 +724,7 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
             }
             if (!quotas) {
                 // throttle frequent pulls
-                if (!force && nowTs - lastTs < minIntervalMs && cached) {
+                if (!force && nowTs - lastTs < minIntervalMs && cachedHasQuota) {
                     quotas = Object.fromEntries(cached.per_model.map(pm => [pm.model_id, {
                         remaining: pm.remaining,
                         resetTime: pm.reset_time,
@@ -766,6 +769,9 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
             const window_label = window_hours
                 ? (Math.abs(window_hours - 5) <= Math.abs(window_hours - 168) ? '~5h' : '~7d')
                 : null;
+            if (classification) {
+                try { await redis.set(`AG_CLASS:${tokenId}`, classification, 'EX', 7 * 86400); } catch { }
+            }
             return {
                 token_id: tokenId,
                 classification,
