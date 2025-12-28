@@ -100,14 +100,14 @@ export default async function adminRoutes(fastify: FastifyInstance) {
       include: {
         _count: {
           select: {
-            credentials: { where: { status: CredentialStatus.ACTIVE } }
+            credentials: { where: { status: { in: [CredentialStatus.ACTIVE, CredentialStatus.COOLING] } } }
           }
         }
       }
     });
 
     const v3Count = await prisma.googleCredential.count({
-      where: { owner_id: userId, status: CredentialStatus.ACTIVE, supports_v3: true }
+      where: { owner_id: userId, status: { in: [CredentialStatus.ACTIVE, CredentialStatus.COOLING] }, supports_v3: true }
     });
 
     // Get System Config for dynamic UI
@@ -561,8 +561,8 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   // 2. Admin Stats (Dashboard)
   fastify.get('/api/admin/stats', { preHandler: requireAdmin }, async () => {
     // A. Capacity & Usage
-    const activeCount = await prisma.googleCredential.count({ where: { status: CredentialStatus.ACTIVE } });
-    const v3CountGlobal = await prisma.googleCredential.count({ where: { status: CredentialStatus.ACTIVE, supports_v3: true } });
+    const activeCount = await prisma.googleCredential.count({ where: { status: { in: [CredentialStatus.ACTIVE, CredentialStatus.COOLING] } } });
+    const v3CountGlobal = await prisma.googleCredential.count({ where: { status: { in: [CredentialStatus.ACTIVE, CredentialStatus.COOLING] }, supports_v3: true } });
     const deadCount = await prisma.googleCredential.count({ where: { status: CredentialStatus.DEAD } });
 
     // "Normal" credentials = Total Active - V3 Active

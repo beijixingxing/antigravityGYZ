@@ -27,7 +27,8 @@ const config = ref({
     claude_limit: 100,
     gemini3_limit: 200,
     rate_limit: 30,
-    rate_limit_increment: 0
+    rate_limit_increment: 0,
+    pool_round_robin: true
   }
 });
 
@@ -272,7 +273,7 @@ onMounted(fetchSettings);
                 <!-- Settings Grid Layout -->
                 <div class="space-y-3 antigravity-right-panel">
                     <!-- Row 1: Token Mode + Rate Limits -->
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
                         <!-- Token Mode Switch -->
                         <div class="flex items-center justify-between p-3 bg-slate-700/30 rounded-xl border border-white/10 hover:bg-slate-700/40 transition-colors">
                             <div class="flex flex-col">
@@ -281,6 +282,18 @@ onMounted(fetchSettings);
                             </div>
                             <label class="relative inline-flex items-center cursor-pointer">
                                 <input type="checkbox" v-model="config.antigravity.use_token_quota" class="sr-only peer">
+                                <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-[#8B5CF6] peer-checked:to-[#4338CA]"></div>
+                            </label>
+                        </div>
+
+                        <!-- Pool Round Robin Switch -->
+                        <div class="flex items-center justify-between p-3 bg-slate-700/30 rounded-xl border border-white/10 hover:bg-slate-700/40 transition-colors">
+                            <div class="flex flex-col">
+                                <span class="text-sm text-white font-medium">分池轮询</span>
+                                <span class="text-xs text-[#94A3B8]">关闭则全部轮询</span>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" v-model="config.antigravity.pool_round_robin" class="sr-only peer">
                                 <div class="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-[#8B5CF6] peer-checked:to-[#4338CA]"></div>
                             </label>
                         </div>

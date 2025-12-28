@@ -433,7 +433,7 @@ export class CronService {
                 let errorMsg: string | null = null;
 
                 try {
-                    const result = await antigravityQuotaCache.refreshToken(tokenData as any);
+                    const result = await antigravityQuotaCache.refreshToken(tokenData as any, { waitForRateLimit: true });
                     classification = result?.classification || null;
                     ok++;
                 } catch (e: any) {

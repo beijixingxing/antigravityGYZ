@@ -32,7 +32,7 @@ export const ANTIGRAVITY_MODELS = [
   'claude-opus-4-5-thinking-4k',
   'claude-opus-4-5-thinking-8k',
   // Gemini 3 Pro 系列
-  'gemini-3-pro-preview',
+  'gemini-3-pro-high',
   'gemini-3-pro-low',
   // Claude Sonnet 4.5 系列
   'claude-sonnet-4-5',                  // 纯净版，无思考
