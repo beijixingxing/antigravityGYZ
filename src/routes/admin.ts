@@ -891,9 +891,79 @@ export default async function adminRoutes(fastify: FastifyInstance) {
       try { agConfig = { ...agConfig, ...JSON.parse(setting.value) }; } catch (e) { }
     }
 
+    // 获取系统配置
+    const configSetting = await prisma.systemSetting.findUnique({ where: { key: 'SYSTEM_CONFIG' } });
+    let systemConfig = { ...DEFAULT_SYSTEM_CONFIG };
+    if (configSetting) {
+      try { systemConfig = { ...systemConfig, ...JSON.parse(configSetting.value) }; } catch (e) { }
+    }
+
+    // 动态配额计算
+    // 辅助函数：从新嵌套格式或旧数字格式中提取配额值
+    const getQuotaValue = (levelConfig: any, defaultValue: number): { base: { flash: number; pro: number; v3: number }, increment: { flash: number; pro: number; v3: number } } => {
+      if (typeof levelConfig === 'number') {
+        // 旧格式：单一数字，按比例分配给各模型
+        return { base: { flash: levelConfig, pro: Math.floor(levelConfig / 4), v3: Math.floor(levelConfig / 4) }, increment: { flash: 0, pro: 0, v3: 0 } };
+      }
+      if (levelConfig && typeof levelConfig === 'object' && levelConfig.base) {
+        // 新嵌套格式
+        return {
+          base: {
+            flash: levelConfig.base?.flash ?? defaultValue,
+            pro: levelConfig.base?.pro ?? Math.floor(defaultValue / 4),
+            v3: levelConfig.base?.v3 ?? Math.floor(defaultValue / 4)
+          },
+          increment: {
+            flash: levelConfig.increment?.flash ?? 0,
+            pro: levelConfig.increment?.pro ?? 0,
+            v3: levelConfig.increment?.v3 ?? 0
+          }
+        };
+      }
+      // 默认值
+      return { base: { flash: defaultValue, pro: Math.floor(defaultValue / 4), v3: Math.floor(defaultValue / 4) }, increment: { flash: 0, pro: 0, v3: 0 } };
+    };
+
     // 使用 UTC+8 时区
     const utc8Offset3 = 8 * 60 * 60 * 1000;
     const todayStr = new Date(Date.now() + utc8Offset3).toISOString().split('T')[0];
+    
+    // 1. 获取所有用户ID
+    const userIds = users.map(u => u.id);
+    
+    // 2. 批量查询所有用户的V3凭证数量
+    const v3Credentials = await prisma.googleCredential.findMany({
+      where: {
+        owner_id: { in: userIds },
+        status: { in: ['ACTIVE', 'COOLING'] },
+        supports_v3: true
+      },
+      select: { owner_id: true }
+    });
+    
+    // 3. 批量查询所有用户的Antigravity Token数量
+    const agTokens = await prisma.antigravityToken.findMany({
+      where: {
+        owner_id: { in: userIds },
+        status: { in: ['ACTIVE', 'COOLING'] },
+        is_enabled: true
+      },
+      select: { owner_id: true }
+    });
+    
+    // 4. 统计每个用户的V3凭证数量
+    const v3CountMap = new Map<number, number>();
+    v3Credentials.forEach(cred => {
+      v3CountMap.set(cred.owner_id, (v3CountMap.get(cred.owner_id) || 0) + 1);
+    });
+    
+    // 5. 统计每个用户的Antigravity Token数量
+    const agTokenCountMap = new Map<number, number>();
+    agTokens.forEach(token => {
+      agTokenCountMap.set(token.owner_id, (agTokenCountMap.get(token.owner_id) || 0) + 1);
+    });
+    
+    // 6. 并行处理用户数据，仅使用Redis查询，避免额外数据库连接
     const enhancedUsers = await Promise.all(users.map(async u => {
       // Dual keys
       const claudeRequests = await redis.get(`USAGE:requests:${todayStr}:${u.id}:antigravity:claude`);
@@ -905,12 +975,65 @@ export default async function adminRoutes(fastify: FastifyInstance) {
       const claudeLegacy = await redis.get(`USAGE:${todayStr}:${u.id}:antigravity:claude`);
       const gemini3Legacy = await redis.get(`USAGE:${todayStr}:${u.id}:antigravity:gemini3`);
 
+      // 从预计算的映射中获取V3凭证数量，避免数据库查询
+      const v3Count = v3CountMap.get(u.id) || 0;
+      
+      // 动态计算用户真实配额
+      const activeCredCount = u._count.credentials;
+      const quotaConf = systemConfig.quota || {};
+      
+      // 根据用户等级获取配额配置
+      let levelQuota: { base: { flash: number; pro: number; v3: number }, increment: { flash: number; pro: number; v3: number } };
+      if (v3Count > 0) {
+        levelQuota = getQuotaValue(quotaConf.v3_contributor, 3000);
+      } else if (activeCredCount > 0) {
+        levelQuota = getQuotaValue(quotaConf.contributor, 1500);
+      } else {
+        levelQuota = getQuotaValue(quotaConf.newbie, 300);
+      }
+      
+      // 计算每个模型的总配额（基础配额 + 每个额外凭证的增量）
+      const additionalCreds = Math.max(0, activeCredCount - 1);
+      const flashQuota = levelQuota.base.flash + additionalCreds * levelQuota.increment.flash;
+      const proQuota = levelQuota.base.pro + additionalCreds * levelQuota.increment.pro;
+      const v3Quota = levelQuota.base.v3 + additionalCreds * levelQuota.increment.v3;
+      
+      // 同时支持旧的 increment_per_credential 字段以向后兼容
+      const legacyInc = quotaConf.increment_per_credential ?? 0;
+      const legacyExtra = additionalCreds * legacyInc;
+      
+      // 总配额：所有模型配额之和 + 旧版增量
+      const totalQuota = flashQuota + proQuota + v3Quota + legacyExtra;
+
+      // 动态计算反重力配额
+      const useTokenQuota = !!(agConfig as any).use_token_quota;
+      const userAgClaudeOverride = (u as any).ag_claude_limit || 0;
+      const userAgGemini3Override = (u as any).ag_gemini3_limit || 0;
+
+      // 从预计算的映射中获取Antigravity Token数量，避免数据库查询
+      const userAgTokenCount = agTokenCountMap.get(u.id) || 0;
+
+      // 获取基础配额和增量配置
+      const baseClaude = useTokenQuota ? ((agConfig as any).claude_token_quota ?? 100000) : ((agConfig as any).claude_limit ?? 100);
+      const baseGemini3 = useTokenQuota ? ((agConfig as any).gemini3_token_quota ?? 200000) : ((agConfig as any).gemini3_limit ?? 200);
+
+      const incClaude = useTokenQuota ? ((agConfig as any).increment_token_per_token_claude || 0) : ((agConfig as any).increment_per_token_claude || 0);
+      const incGemini3 = useTokenQuota ? ((agConfig as any).increment_token_per_token_gemini3 || 0) : ((agConfig as any).increment_per_token_gemini3 || 0);
+
+      // 计算配额
+      const computedClaudeLimit = baseClaude + (userAgTokenCount > 0 ? userAgTokenCount * incClaude : 0);
+      const computedGemini3Limit = baseGemini3 + (userAgTokenCount > 0 ? userAgTokenCount * incGemini3 : 0);
+
+      // 有效配额：如果用户有手动设置的配额，则使用手动设置的，否则使用计算出的配额
+      const effectiveAgClaudeLimit = userAgClaudeOverride > 0 ? userAgClaudeOverride : computedClaudeLimit;
+      const effectiveAgGemini3Limit = userAgGemini3Override > 0 ? userAgGemini3Override : computedGemini3Limit;
+
       return {
         id: u.id,
         email: u.email,
         role: u.role,
         level: u.level,
-        daily_limit: u.daily_limit,
+        daily_limit: totalQuota, // 返回动态计算的真实配额
         today_used: u.today_used,
         is_active: u.is_active,
         created_at: u.created_at,
@@ -918,17 +1041,19 @@ export default async function adminRoutes(fastify: FastifyInstance) {
         discordId: (u as any).discordId || null,
         discordUsername: (u as any).discordUsername || null,
         discordAvatar: (u as any).discordAvatar || null,
-        ag_claude_limit: (u as any).ag_claude_limit ?? 0,
-        ag_gemini3_limit: (u as any).ag_gemini3_limit ?? 0,
+        ag_claude_limit: effectiveAgClaudeLimit, // 返回动态计算的有效反重力配额
+        ag_gemini3_limit: effectiveAgGemini3Limit, // 返回动态计算的有效反重力配额
         ag_claude_used_requests: parseInt(claudeRequests || claudeLegacy || '0', 10),
         ag_gemini3_used_requests: parseInt(gemini3Requests || gemini3Legacy || '0', 10),
         ag_claude_used_tokens: parseInt(claudeTokens || '0', 10),
         ag_gemini3_used_tokens: parseInt(gemini3Tokens || '0', 10),
         ag_claude_token_limit: agConfig.claude_token_quota,
         ag_gemini3_token_limit: agConfig.gemini3_token_quota,
-        ag_active_tokens: (u as any)._count?.antigravity_tokens || 0 // Assuming you added relation count in query, if not we need to fetch
+        ag_active_tokens: userAgTokenCount, // 返回真实的反重力Token数量
+        ag_use_token_quota: useTokenQuota // 返回是否使用Token模式
       };
     }));
+
 
     return {
       data: enhancedUsers,

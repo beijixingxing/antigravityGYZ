@@ -288,12 +288,12 @@
                 <button @click="adminTab = 'settings'" class="px-6 py-3 rounded-full text-sm font-bold transition-all whitespace-nowrap" :class="adminTab === 'settings' ? 'bg-gradient-to-br from-[#8B5CF6] to-[#4338CA] text-white shadow-[0_0_15px_rgba(139,92,246,0.4)]' : 'text-[#A5B4FC] hover:bg-white/5 hover:text-white'">⚙️ 系统设置</button>
             </div>
             <div class="p-4 text-white">
-                <AdminCredentialTable v-if="adminTab === 'credentials'" />
-                <AdminAntigravityTokens v-if="adminTab === 'antigravity_tokens'" @quota-refreshed="fetchPoolsOverview" />
-                <AdminUserTable v-if="adminTab === 'users'" />
-                <AdminQuotaSettings v-if="adminTab === 'quota'" @saved="fetchStats" />
-                <AdminAnnouncement v-if="adminTab === 'announcement'" />
-                <div v-if="adminTab === 'settings'">
+                <AdminCredentialTable v-if="adminTab === 'credentials'" :key="adminTab" />
+                <AdminAntigravityTokens v-if="adminTab === 'antigravity_tokens'" :key="adminTab" @quota-refreshed="fetchPoolsOverview" />
+                <AdminUserTable v-if="adminTab === 'users'" :key="adminTab" />
+                <AdminQuotaSettings v-if="adminTab === 'quota'" :key="adminTab" @saved="fetchStats" />
+                <AdminAnnouncement v-if="adminTab === 'announcement'" :key="adminTab" />
+                <div v-if="adminTab === 'settings'" :key="adminTab">
                     <AdminSettings class="mb-6" />
                 </div>
             </div>
@@ -533,16 +533,38 @@ const fetchPoolsOverview = async () => {
 
 const fetchStats = async () => {
   try {
+    // 主统计数据 - 串行获取，因为后续逻辑依赖它
     const res = await api.get('/dashboard/stats', { params: { _t: Date.now() } });
     stats.value = res.data;
     userInfo.value = res.data;
     isAdmin.value = res.data.role === 'ADMIN';
 
+    // 并行执行的 API 调用
+    const parallelTasks = [
+      refreshApiKeys(),
+      api.get('/credentials').then(resCreds => {
+        myCredentials.value = resCreds.data;
+        selectedCredentialIds.value = [];
+        syncCredentialsPage();
+        // Auto-collapse upload section if user has credentials
+        if (myCredentials.value.length > 0) {
+            isUploadExpanded.value = false;
+        }
+      }),
+      api.get('/announcement').then(resAnnounce => {
+        announcementData.value = resAnnounce.data;
+      })
+    ];
+
     if(isAdmin.value) {
-        const resAdmin = await api.get('/admin/stats');
-        adminStats.value = resAdmin.data;
-        try {
-            const ag = await api.get('/antigravity/stats');
+        // 管理员数据获取
+        const adminStatsPromise = api.get('/admin/stats').then(resAdmin => {
+            adminStats.value = resAdmin.data;
+        });
+        parallelTasks.push(adminStatsPromise);
+
+        // 反重力数据获取
+        const antigravityPromise = api.get('/antigravity/stats').then(ag => {
             // Merge a minimal AG usage widget into adminStats.overview without impacting Cloud Code stats
             adminStats.value.overview = {
                 ...adminStats.value.overview,
@@ -553,24 +575,16 @@ const fetchStats = async () => {
             // Get Antigravity Leaderboard
             agLeaderboard.value = ag.data.leaderboard || [];
             agTokenStats.value = ag.data.token_stats || null;
-            
-            await fetchPoolsOverview();
-        } catch {}
+        }).then(() => {
+            return fetchPoolsOverview();
+        }).catch(() => {
+            // 忽略反重力数据获取错误，继续执行其他任务
+        });
+        parallelTasks.push(antigravityPromise);
     }
 
-    await refreshApiKeys();
-
-    const resCreds = await api.get('/credentials');
-    myCredentials.value = resCreds.data;
-    selectedCredentialIds.value = [];
-    syncCredentialsPage();
-    // Auto-collapse upload section if user has credentials
-    if (myCredentials.value.length > 0) {
-        isUploadExpanded.value = false;
-    }
-    
-    const resAnnounce = await api.get('/announcement');
-    announcementData.value = resAnnounce.data;
+    // 等待所有并行任务完成
+    await Promise.all(parallelTasks);
 
   } catch(e: any) {
       if(e.response?.status === 401) router.push('/login');
@@ -852,6 +866,10 @@ onMounted(() => {
 });
 
 watch(currentTab, () => {
+    fetchStats();
+});
+
+watch(adminTab, () => {
     fetchStats();
 });
 </script>
