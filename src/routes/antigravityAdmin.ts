@@ -268,10 +268,17 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
             });
         }
 
-        // Sort by total usage and take top 25
+        // 按总使用量排序并取前25名
         leaderboard.sort((a, b) => b.total - a.total);
         const top25 = leaderboard.slice(0, 25);
 
+        // 计算凭证统计数据
+        const totalTokens = await prisma.antigravityToken.count({ where: { is_enabled: true } });
+        const inactiveTokens = await prisma.antigravityToken.count({ where: { is_enabled: false } });
+        const activeTokensCount = activeTokens;
+        const personalMax = 0; // 实际应从系统配置获取
+        const totalCapacity = personalMax > 0 ? personalMax * activeTokensCount : 0;
+        
         return {
             date: todayStr,
             usage: {
@@ -298,7 +305,13 @@ export default async function antigravityAdminRoutes(app: FastifyInstance) {
                 active_tokens: activeTokens,
                 limits: config
             },
-            leaderboard: top25
+            leaderboard: top25,
+            token_stats: {
+                total: totalTokens,
+                active: activeTokensCount,
+                inactive: inactiveTokens,
+                total_capacity: totalCapacity
+            }
         };
     });
 
